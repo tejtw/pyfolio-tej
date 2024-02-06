@@ -13,10 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import datetime
-import calendar
 from collections import OrderedDict
 from functools import wraps
-
+import sys
 import empyrical as ep
 import matplotlib
 import matplotlib.patches as patches
@@ -30,6 +29,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.ticker import FuncFormatter
 
 import seaborn as sns
+
 from . import capacity
 from . import pos
 from . import timeseries
@@ -48,6 +48,9 @@ def customize(func):
         set_context = kwargs.pop("set_context", True)
         if set_context:
             with plotting_context(), axes_style():
+                plt.rcParams['axes.unicode_minus'] = False                 # 20230823 (by MRC) 負號顯示問題
+                #plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']     # 20230823 (by MRC) 中文顯示問題
+
                 return func(*args, **kwargs)
         else:
             return func(*args, **kwargs)
@@ -131,7 +134,11 @@ def axes_style(style="darkgrid", rc=None):
     if rc is None:
         rc = {}
 
-    rc_default = {}
+    # 20230823 (by MRC) 中文顯示問題
+    # plt.rcParams預設是['Arial', 'DejaVu Sans', 'Liberation Sans', 'Bitstream Vera Sans', 'sans-serif']
+    # windows可以修改為Microsoft JhengHei、mingliu、'Arial Unicode MS'、或 DFKai-SB
+    # Mac可設為'Arial Unicode MS'
+    rc_default = {"font.sans-serif": ['Arial Unicode MS']}
 
     # Add defaults if they do not exist
     for name, val in rc_default.items():
@@ -139,8 +146,24 @@ def axes_style(style="darkgrid", rc=None):
 
     return sns.axes_style(style=style, rc=rc)
 
+# 20231101 modify by yo
+def transfer_chinese(cnm):
+    """
+    Decorator to set transfer_chinese during function call.
+    """
+    def call_set_language(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            set_context = kwargs.pop("set_chinese_name", False)
+            if set_context:                  
+                return func(cname=cnm,*args,**kwargs)
+            else:  
+                return func(*args, **kwargs)
+        return wrapper
+    return call_set_language
 
-def plot_monthly_returns_heatmap(returns, ax=None, **kwargs):
+
+def plot_monthly_returns_heatmap(returns, ax=None, cname=None, **kwargs):
     """
     Plots a heatmap of returns by month.
 
@@ -166,10 +189,6 @@ def plot_monthly_returns_heatmap(returns, ax=None, **kwargs):
     monthly_ret_table = ep.aggregate_returns(returns, "monthly")
     monthly_ret_table = monthly_ret_table.unstack().round(3)
 
-    monthly_ret_table.rename(
-        columns={i: m for i, m in enumerate(calendar.month_abbr)}, inplace=True
-    )
-
     sns.heatmap(
         monthly_ret_table.fillna(0) * 100.0,
         annot=True,
@@ -177,17 +196,26 @@ def plot_monthly_returns_heatmap(returns, ax=None, **kwargs):
         alpha=1.0,
         center=0.0,
         cbar=False,
-        cmap=matplotlib.cm.RdYlGn,
+        #cmap=matplotlib.cm.RdYlGn,
+        cmap=matplotlib.cm.RdYlGn_r,  # 20230822 (by MRC) 配合台股習慣，紅色上漲，綠色下跌
         ax=ax,
         **kwargs,
     )
     ax.set_ylabel("Year")
     ax.set_xlabel("Month")
     ax.set_title("Monthly returns (%)")
+
+    # 202311101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_annual_returns(returns, ax=None, **kwargs):
+def plot_annual_returns(returns, ax=None, cname=None, **kwargs):
     """
     Plots a bar graph of returns by year.
 
@@ -218,24 +246,32 @@ def plot_annual_returns(returns, ax=None, **kwargs):
 
     ax.axvline(
         100 * ann_ret_df.values.mean(),
-        color="red",
+        color="steelblue",
         linestyle="--",
-        lw=1,
+        lw=4,
         alpha=0.7,
     )
     (100 * ann_ret_df.sort_index(ascending=False)).plot(
         ax=ax, kind="barh", alpha=0.70, **kwargs
     )
-    ax.axvline(0.0, color="black", linestyle="-", lw=2)
+    ax.axvline(0.0, color="black", linestyle="-", lw=3)
 
     ax.set_ylabel("Year")
     ax.set_xlabel("Returns")
     ax.set_title("Annual returns")
     ax.legend(["Mean"], frameon=True, framealpha=0.5)
+
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_monthly_returns_dist(returns, ax=None, **kwargs):
+def plot_monthly_returns_dist(returns, ax=None, cname=None, **kwargs):
     """
     Plots a distribution of monthly returns.
 
@@ -266,7 +302,7 @@ def plot_monthly_returns_dist(returns, ax=None, **kwargs):
 
     ax.hist(
         100 * monthly_ret_table,
-        color="steelblue",
+        color="orangered",
         alpha=0.80,
         bins=20,
         **kwargs,
@@ -274,21 +310,29 @@ def plot_monthly_returns_dist(returns, ax=None, **kwargs):
 
     ax.axvline(
         100 * monthly_ret_table.mean(),
-        color="red",
+        color="gold",
         linestyle="--",
-        lw=1,
+        lw=4,
         alpha=1.0,
     )
 
-    ax.axvline(0.0, color="black", linestyle="-", lw=1, alpha=0.75)
+    ax.axvline(0.0, color="black", linestyle="-", lw=3, alpha=0.75)
     ax.legend(["Mean"], frameon=True, framealpha=0.5)
     ax.set_ylabel("Number of months")
     ax.set_xlabel("Returns")
     ax.set_title("Distribution of monthly returns")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_holdings(returns, positions, legend_loc="best", ax=None, **kwargs):
+def plot_holdings(returns, positions, legend_loc="best", ax=None, cname=None, **kwargs):
     """
     Plots total amount of stocks with an active position, either short
     or long. Displays daily total, daily average per month, and
@@ -342,11 +386,19 @@ def plot_holdings(returns, positions, legend_loc="best", ax=None, **kwargs):
     ax.set_title("Total holdings")
     ax.set_ylabel("Holdings")
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
 def plot_long_short_holdings(
-    returns, positions, legend_loc="upper left", ax=None, **kwargs
+    returns, positions, legend_loc="upper left", ax=None, cname=None,  **kwargs
 ):
     """
     Plots total amount of stocks with an active position, breaking out
@@ -382,11 +434,11 @@ def plot_long_short_holdings(
     df_longs = positions[positions > 0].count(axis=1)
     df_shorts = positions[positions < 0].count(axis=1)
     lf = ax.fill_between(
-        df_longs.index, 0, df_longs.values, color="g", alpha=0.5, lw=2.0
-    )
+        df_longs.index, 0, df_longs.values, color="r", alpha=0.5, lw=2.0
+    )                                                                     # 20230822 (by MRC) 配合台股習慣 color="g"->"r"
     sf = ax.fill_between(
-        df_shorts.index, 0, df_shorts.values, color="r", alpha=0.5, lw=2.0
-    )
+        df_shorts.index, 0, df_shorts.values, color="g", alpha=0.5, lw=2.0
+    )                                                                     # 20230822 (by MRC) 配合台股習慣 color="r"->"g"
 
     bf = patches.Rectangle([0, 0], 1, 1, color="darkgoldenrod")
     leg = ax.legend(
@@ -406,10 +458,18 @@ def plot_long_short_holdings(
     ax.set_title("Long and short holdings")
     ax.set_ylabel("Holdings")
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_drawdown_periods(returns, top=10, ax=None, **kwargs):
+def plot_drawdown_periods(returns, top=10, ax=None, cname=None, **kwargs):
     """
     Plots cumulative returns highlighting top drawdown periods.
 
@@ -438,25 +498,37 @@ def plot_drawdown_periods(returns, top=10, ax=None, **kwargs):
     ax.yaxis.set_major_formatter(FuncFormatter(y_axis_formatter))
 
     df_cum_rets = ep.cum_returns(returns, starting_value=1.0)
-    df_drawdowns = timeseries.gen_drawdown_table(returns, top=top)
-
+    df_drawdowns = (timeseries.gen_drawdown_table(returns, top=top)).dropna(how = 'all')
     df_cum_rets.plot(ax=ax, **kwargs)
 
     lim = ax.get_ylim()
     colors = sns.cubehelix_palette(len(df_drawdowns))[::-1]
-    for i, (peak, recovery) in df_drawdowns[["Peak date", "Recovery date"]].iterrows():
+    for i, (peak, recovery) in df_drawdowns[
+        ["Peak date", "Recovery date"]
+    ].iterrows():
         if pd.isnull(recovery):
             recovery = returns.index[-1]
-        ax.fill_between((peak, recovery), lim[0], lim[1], alpha=0.4, color=colors[i])
+        ax.fill_between(
+            (peak, recovery), lim[0], lim[1], alpha=0.4, color=colors[i]
+        )
     ax.set_ylim(lim)
     ax.set_title("Top %i drawdown periods" % top)
     ax.set_ylabel("Cumulative returns")
     ax.legend(["Portfolio"], loc="upper left", frameon=True, framealpha=0.5)
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        cname[_name]['title'] = cname[_name]['title'].format(top=top)
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+    
     return ax
 
 
-def plot_drawdown_underwater(returns, ax=None, **kwargs):
+def plot_drawdown_underwater(returns, ax=None, cname=None, **kwargs):
     """
     Plots how far underwaterr returns are over time, or plots current
     drawdown vs. date.
@@ -486,14 +558,22 @@ def plot_drawdown_underwater(returns, ax=None, **kwargs):
     df_cum_rets = ep.cum_returns(returns, starting_value=1.0)
     running_max = np.maximum.accumulate(df_cum_rets)
     underwater = -100 * ((running_max - df_cum_rets) / running_max)
-    underwater.plot(ax=ax, kind="area", color="salmon", alpha=0.7, **kwargs)
+    (underwater).plot(ax=ax, kind="area", color="coral", alpha=0.7, **kwargs)
     ax.set_ylabel("Drawdown")
     ax.set_title("Underwater plot")
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_perf_stats(returns, factor_returns, ax=None):
+def plot_perf_stats(returns, factor_returns, cname=None, ax=None):
     """
     Create box plot of some performance metrics of the strategy.
     The width of the box whiskers is determined by a bootstrap.
@@ -525,7 +605,11 @@ def plot_perf_stats(returns, factor_returns, ax=None):
     bootstrap_values = bootstrap_values.drop("Kurtosis", axis="columns")
 
     sns.boxplot(data=bootstrap_values, orient="h", ax=ax)
-
+    
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_title(cname[_name]['title'])
     return ax
 
 
@@ -619,8 +703,12 @@ def show_perf_stats(
             positions_is = positions[positions.index < live_start_date]
             positions_oos = positions[positions.index >= live_start_date]
             if transactions is not None:
-                transactions_is = transactions[(transactions.index < live_start_date)]
-                transactions_oos = transactions[(transactions.index > live_start_date)]
+                transactions_is = transactions[
+                    (transactions.index < live_start_date)
+                ]
+                transactions_oos = transactions[
+                    (transactions.index > live_start_date)
+                ]
 
         perf_stats_is = perf_func(
             returns_is,
@@ -657,13 +745,17 @@ def show_perf_stats(
         )
     else:
         if len(returns.index) > 0:
-            date_rows["Total months"] = int(len(returns) / APPROX_BDAYS_PER_MONTH)
+            date_rows["Total months"] = int(
+                len(returns) / APPROX_BDAYS_PER_MONTH
+            )
         perf_stats = pd.DataFrame(perf_stats_all, columns=["Backtest"])
 
     for column in perf_stats.columns:
         for stat, value in perf_stats[column].items():
             if stat in STAT_FUNCS_PCT:
-                perf_stats.loc[stat, column] = str(np.round(value * 100, 3)) + "%"
+                perf_stats.loc[stat, column] = (
+                    str(np.round(value * 100, 3)) + "%"
+                )
     if header_rows is None:
         header_rows = date_rows
     else:
@@ -675,9 +767,9 @@ def show_perf_stats(
         float_format="{0:.2f}".format,
         header_rows=header_rows,
     )
+    return perf_stats
 
-
-def plot_returns(returns, live_start_date=None, ax=None):
+def plot_returns(returns, live_start_date=None, ax=None, cname=None):
     """
     Plots raw returns over time.
 
@@ -718,6 +810,13 @@ def plot_returns(returns, live_start_date=None, ax=None):
 
     else:
         returns.plot(ax=ax, color="g")
+    
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
 
     return ax
 
@@ -732,6 +831,7 @@ def plot_rolling_returns(
     volatility_match=False,
     cone_function=timeseries.forecast_cone_bootstrap,
     ax=None,
+    cname=None,
     **kwargs,
 ):
     """
@@ -794,7 +894,9 @@ def plot_rolling_returns(
     ax.set_yscale("log" if logy else "linear")
 
     if volatility_match and factor_returns is None:
-        raise ValueError("volatility_match requires passing of factor_returns.")
+        raise ValueError(
+            "volatility_match requires passing of " "factor_returns."
+        )
     elif volatility_match and factor_returns is not None:
         bmark_vol = factor_returns.loc[returns.index].std()
         returns = (returns / returns.std()) * bmark_vol
@@ -805,7 +907,9 @@ def plot_rolling_returns(
     ax.yaxis.set_major_formatter(FuncFormatter(y_axis_formatter))
 
     if factor_returns is not None:
-        cum_factor_returns = ep.cum_returns(factor_returns[cum_rets.index], 1.0)
+        cum_factor_returns = ep.cum_returns(
+            factor_returns[cum_rets.index], 1.0
+        )
         cum_factor_returns.plot(
             lw=2,
             color="gray",
@@ -821,15 +925,15 @@ def plot_rolling_returns(
         oos_cum_returns = cum_rets.loc[cum_rets.index >= live_start_date]
     else:
         is_cum_returns = cum_rets
-        oos_cum_returns = pd.Series([], dtype="float64")
+        oos_cum_returns = pd.Series([])
 
     is_cum_returns.plot(
-        lw=2, color="forestgreen", alpha=0.6, label="Backtest", ax=ax, **kwargs
+        lw=3, color="forestgreen", alpha=0.6, label="Backtest", ax=ax, **kwargs
     )
 
     if len(oos_cum_returns) > 0:
         oos_cum_returns.plot(
-            lw=2, color="red", alpha=0.6, label="Live", ax=ax, **kwargs
+            lw=4, color="red", alpha=0.6, label="Live", ax=ax, **kwargs
         )
 
         if cone_std is not None:
@@ -856,12 +960,20 @@ def plot_rolling_returns(
 
     if legend_loc is not None:
         ax.legend(loc=legend_loc, frameon=True, framealpha=0.5)
-    ax.axhline(1.0, linestyle="--", color="black", lw=1)
+    ax.axhline(1.0, linestyle="--", color="black", lw=2)
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
 
     return ax
 
 
-def plot_rolling_beta(returns, factor_returns, legend_loc="best", ax=None, **kwargs):
+def plot_rolling_beta(
+    returns, factor_returns, legend_loc="best", ax=None, cname=None, **kwargs
+):
     """
     Plots the rolling 6-month and 12-month beta versus date.
 
@@ -898,22 +1010,48 @@ def plot_rolling_beta(returns, factor_returns, legend_loc="best", ax=None, **kwa
     rb_1 = timeseries.rolling_beta(
         returns, factor_returns, rolling_window=APPROX_BDAYS_PER_MONTH * 6
     )
-    rb_1.plot(color="steelblue", lw=2, alpha=0.6, ax=ax, **kwargs)
     rb_2 = timeseries.rolling_beta(
         returns, factor_returns, rolling_window=APPROX_BDAYS_PER_MONTH * 12
     )
-    rb_2.plot(color="grey", lw=2, alpha=0.4, ax=ax, **kwargs)
-    ax.axhline(rb_1.mean(), color="steelblue", linestyle="--", lw=2)
-    ax.axhline(1.0, color="black", linestyle="--", lw=1)
+
+    # 20230822 (MRC) 避免線段超出顯示範圍，且把位置修改在這邊(原935)，
+    # 當最大值>3時只顯示到3，當最大值<3時顯示到最大值。
+    # 同時讓使用者可以透過**kwargs(ylim=(min, max))修改預設。
+    rb_max = max(rb_2.max(),rb_1.max())
+    rb_min = max(rb_2.min(),rb_1.min())
+    top = 3 if rb_max > 3 else rb_max
+    bottom = -3 if rb_min <-3 else rb_min
+
+    # 20231107 避免回測期間太短無法產出beta值而導致計算Y軸上下限錯誤
+    if pd.isna(top) & pd.notna(bottom):
+        ax.set_ylim((bottom, 3))
+
+    elif pd.isna(bottom) & pd.notna(top):
+        ax.set_ylim((-3, top))
+
+    elif pd.isna(top) & pd.isna(bottom):
+        ax.set_ylim((-2, 2))
+
+    else:
+        ax.set_ylim((bottom, top))
+
+    rb_1.plot(color="steelblue", lw=3, alpha=0.6, ax=ax, **kwargs)
+    rb_2.plot(color="grey", lw=3, alpha=0.4, ax=ax, **kwargs)
+    ax.axhline(rb_1.mean(), color="steelblue", linestyle="--", lw=3)
+    ax.axhline(0.0, color="black", linestyle="-", lw=2)
 
     ax.set_xlabel("")
-    ax.legend(
-        ["6-mo", "12-mo", "6-mo Average"],
-        loc=legend_loc,
-        frameon=True,
-        framealpha=0.5,
-    )
-    # ax.set_ylim((-0.5, 1.5))
+    ax.legend(["6-mo", "12-mo"], loc=legend_loc, frameon=True, framealpha=0.5)
+
+    #ax.set_ylim((-1.0, 1.0)) # 20230822 (MRC) 避免線段超出顯示範圍
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
@@ -923,6 +1061,7 @@ def plot_rolling_volatility(
     rolling_window=APPROX_BDAYS_PER_MONTH * 6,
     legend_loc="best",
     ax=None,
+    cname=None,
     **kwargs,
 ):
     """
@@ -960,17 +1099,19 @@ def plot_rolling_volatility(
     ax.yaxis.set_major_formatter(FuncFormatter(y_axis_formatter))
 
     rolling_vol_ts = timeseries.rolling_volatility(returns, rolling_window)
-    rolling_vol_ts.plot(alpha=0.7, lw=2, color="orangered", ax=ax, **kwargs)
+    rolling_vol_ts.plot(alpha=0.7, lw=3, color="orangered", ax=ax, **kwargs)
     if factor_returns is not None:
         rolling_vol_ts_factor = timeseries.rolling_volatility(
             factor_returns, rolling_window
         )
-        rolling_vol_ts_factor.plot(alpha=0.7, lw=2, color="grey", ax=ax, **kwargs)
+        rolling_vol_ts_factor.plot(
+            alpha=0.7, lw=3, color="grey", ax=ax, **kwargs
+        )
 
     ax.set_title("Rolling volatility (6-month)")
-    ax.axhline(rolling_vol_ts.mean(), color="steelblue", linestyle="--", lw=2)
+    ax.axhline(rolling_vol_ts.mean(), color="steelblue", linestyle="--", lw=3)
 
-    ax.axhline(0.0, color="black", linestyle="--", lw=1, zorder=2)
+    ax.axhline(0.0, color="black", linestyle="-", lw=2)
 
     ax.set_ylabel("Volatility")
     ax.set_xlabel("")
@@ -988,6 +1129,14 @@ def plot_rolling_volatility(
             frameon=True,
             framealpha=0.5,
         )
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'].format(round(rolling_window/APPROX_BDAYS_PER_MONTH)))
+
     return ax
 
 
@@ -997,6 +1146,7 @@ def plot_rolling_sharpe(
     rolling_window=APPROX_BDAYS_PER_MONTH * 6,
     legend_loc="best",
     ax=None,
+    cname=None,
     **kwargs,
 ):
     """
@@ -1034,22 +1184,28 @@ def plot_rolling_sharpe(
     ax.yaxis.set_major_formatter(FuncFormatter(y_axis_formatter))
 
     rolling_sharpe_ts = timeseries.rolling_sharpe(returns, rolling_window)
-    rolling_sharpe_ts.plot(alpha=0.7, lw=2, color="orangered", ax=ax, **kwargs)
+    rolling_sharpe_ts.plot(alpha=0.7, lw=3, color="orangered", ax=ax, **kwargs)
 
     if factor_returns is not None:
         rolling_sharpe_ts_factor = timeseries.rolling_sharpe(
             factor_returns, rolling_window
         )
-        rolling_sharpe_ts_factor.plot(alpha=0.7, lw=2, color="grey", ax=ax, **kwargs)
+        rolling_sharpe_ts_factor.plot(
+            alpha=0.7, lw=3, color="grey", ax=ax, **kwargs
+        )
 
     ax.set_title("Rolling Sharpe ratio (6-month)")
-    ax.axhline(rolling_sharpe_ts.mean(), color="steelblue", linestyle="--", lw=2)
-    ax.axhline(0.0, color="black", linestyle="--", lw=1, zorder=2)
+    ax.axhline(
+        rolling_sharpe_ts.mean(), color="steelblue", linestyle="--", lw=3
+    )
+    ax.axhline(0.0, color="black", linestyle="-", lw=3)
 
     ax.set_ylabel("Sharpe ratio")
     ax.set_xlabel("")
     if factor_returns is None:
-        ax.legend(["Sharpe", "Average"], loc=legend_loc, frameon=True, framealpha=0.5)
+        ax.legend(
+            ["Sharpe", "Average"], loc=legend_loc, frameon=True, framealpha=0.5
+        )
     else:
         ax.legend(
             ["Sharpe", "Benchmark Sharpe", "Average"],
@@ -1058,10 +1214,17 @@ def plot_rolling_sharpe(
             framealpha=0.5,
         )
 
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'].format(round(rolling_window/APPROX_BDAYS_PER_MONTH)))
+
     return ax
 
 
-def plot_gross_leverage(returns, positions, ax=None, **kwargs):
+def plot_gross_leverage(returns, positions, ax=None, cname=None,  **kwargs):
     """
     Plots gross leverage versus date.
 
@@ -1097,10 +1260,18 @@ def plot_gross_leverage(returns, positions, ax=None, **kwargs):
     ax.set_title("Gross leverage")
     ax.set_ylabel("Gross leverage")
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+    
     return ax
 
 
-def plot_exposures(returns, positions, ax=None, **kwargs):
+def plot_exposures(returns, positions, ax=None, cname=None, **kwargs):
     """
     Plots a cake chart of the long and short exposure.
 
@@ -1132,9 +1303,11 @@ def plot_exposures(returns, positions, ax=None, **kwargs):
     net_exp = pos_no_cash.sum(axis=1) / positions.sum(axis=1)
 
     ax.fill_between(
-        l_exp.index, 0, l_exp.values, label="Long", color="green", alpha=0.5
-    )
-    ax.fill_between(s_exp.index, 0, s_exp.values, label="Short", color="red", alpha=0.5)
+        l_exp.index, 0, l_exp.values, label="Long", color="red", alpha=0.5
+    )                                                                         # 20230822 (by MRC) 配合台股習慣 color="green"->"red"
+    ax.fill_between(
+        s_exp.index, 0, s_exp.values, label="Short", color="green", alpha=0.5
+    )                                                                         # 20230822 (by MRC) 配合台股習慣 color="red"->"green"
     ax.plot(
         net_exp.index,
         net_exp.values,
@@ -1148,6 +1321,14 @@ def plot_exposures(returns, positions, ax=None, **kwargs):
     ax.set_ylabel("Exposure")
     ax.legend(loc="lower left", frameon=True, framealpha=0.5)
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
@@ -1158,6 +1339,7 @@ def show_and_plot_top_positions(
     hide_positions=False,
     legend_loc="real_best",
     ax=None,
+    cname=None,
     **kwargs,
 ):
     """
@@ -1193,7 +1375,9 @@ def show_and_plot_top_positions(
     positions_alloc = positions_alloc.copy()
     positions_alloc.columns = positions_alloc.columns.map(utils.format_asset)
 
-    df_top_long, df_top_short, df_top_abs = pos.get_top_long_short_abs(positions_alloc)
+    df_top_long, df_top_short, df_top_abs = pos.get_top_long_short_abs(
+        positions_alloc
+    )
 
     if show_and_plot == 1 or show_and_plot == 2:
         utils.print_table(
@@ -1254,11 +1438,16 @@ def show_and_plot_top_positions(
 
         if hide_positions:
             ax.legend_.remove()
-
+        # 20231101 modify to show chinese name(yo)
+        if cname:
+            _name = sys._getframe(0).f_code.co_name
+            ax.set_ylabel(cname[_name]['ylabel'])
+            ax.set_xlabel(cname[_name]['xlabel'])
+            ax.set_title(cname[_name]['title'])
         return ax
 
 
-def plot_max_median_position_concentration(positions, ax=None, **kwargs):
+def plot_max_median_position_concentration(positions, ax=None, cname=None, **kwargs):
     """
     Plots the max and median of long and short position concentrations
     over the time.
@@ -1280,17 +1469,25 @@ def plot_max_median_position_concentration(positions, ax=None, **kwargs):
         ax = plt.gca()
 
     alloc_summary = pos.get_max_median_position_concentration(positions)
-    colors = ["mediumblue", "steelblue", "tomato", "firebrick"]
+    #colors = ["mediumblue", "steelblue", "tomato", "firebrick"] # 20230822 (by MRC) 配合台股習慣
+    colors = ["firebrick", "tomato", "steelblue", "mediumblue"]  
     alloc_summary.plot(linewidth=1, color=colors, alpha=0.6, ax=ax)
 
     ax.legend(loc="center left", frameon=True, framealpha=0.5)
     ax.set_ylabel("Exposure")
     ax.set_title("Long/short max and median position concentration")
+    
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
 
     return ax
 
 
-def plot_sector_allocations(returns, sector_alloc, ax=None, **kwargs):
+def plot_sector_allocations(returns, sector_alloc, ax=None, cname=None, **kwargs):
     """
     Plots the sector exposures of the portfolio over time.
 
@@ -1315,10 +1512,14 @@ def plot_sector_allocations(returns, sector_alloc, ax=None, **kwargs):
     if ax is None:
         ax = plt.gca()
 
-    sector_alloc.plot(title="Sector allocation over time", alpha=0.5, ax=ax, **kwargs)
+    sector_alloc.plot(
+        title="Sector allocation over time", alpha=0.5, ax=ax, **kwargs
+    )
 
     box = ax.get_position()
-    ax.set_position([box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9])
+    ax.set_position(
+        [box.x0, box.y0 + box.height * 0.1, box.width, box.height * 0.9]
+    )
 
     # Put a legend below current axis
     ax.legend(
@@ -1327,16 +1528,25 @@ def plot_sector_allocations(returns, sector_alloc, ax=None, **kwargs):
         framealpha=0.5,
         bbox_to_anchor=(0.5, -0.14),
         ncol=5,
+        prop={"family" : plt.rcParams['font.sans-serif']} 
+        # 20230823 (by MRC) 新增prop參數，在set_context=True下或自行設定字體下，應可取到能支援中文的字體。
     )
 
     ax.set_xlim((sector_alloc.index[0], sector_alloc.index[-1]))
     ax.set_ylabel("Exposure by sector")
     ax.set_xlabel("")
 
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_return_quantiles(returns, live_start_date=None, ax=None, **kwargs):
+def plot_return_quantiles(returns, live_start_date=None, ax=None, cname=None, **kwargs):
     """
     Creates a box plot of daily, weekly, and monthly return
     distributions.
@@ -1371,7 +1581,7 @@ def plot_return_quantiles(returns, live_start_date=None, ax=None, **kwargs):
     is_weekly = ep.aggregate_returns(is_returns, "weekly")
     is_monthly = ep.aggregate_returns(is_returns, "monthly")
     sns.boxplot(
-        data=[is_returns, is_weekly, is_monthly],
+        data=[is_returns.values, is_weekly.values, is_monthly.values], # 20231124 modify by yo
         palette=["#4c72B0", "#55A868", "#CCB974"],
         ax=ax,
         **kwargs,
@@ -1383,9 +1593,9 @@ def plot_return_quantiles(returns, live_start_date=None, ax=None, **kwargs):
         oos_monthly = ep.aggregate_returns(oos_returns, "monthly")
 
         sns.swarmplot(
-            data=[oos_returns, oos_weekly, oos_monthly],
+            data=[oos_returns.values, oos_weekly.values, oos_monthly.values], # 20231124 modify by yo
             ax=ax,
-            palette="dark:red",
+            color="red",
             marker="d",
             **kwargs,
         )
@@ -1400,7 +1610,13 @@ def plot_return_quantiles(returns, live_start_date=None, ax=None, **kwargs):
         ax.legend(handles=[red_dots], frameon=True, framealpha=0.5)
     ax.set_xticklabels(["Daily", "Weekly", "Monthly"])
     ax.set_title("Return quantiles")
-
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+        ax.set_xticklabels(['日','周','月'])
     return ax
 
 
@@ -1411,6 +1627,7 @@ def plot_turnover(
     turnover_denom="AGB",
     legend_loc="best",
     ax=None,
+    cname=None,
     **kwargs,
 ):
     """
@@ -1458,8 +1675,12 @@ def plot_turnover(
     df_turnover = txn.get_turnover(positions, transactions, turnover_denom)
     df_turnover_by_month = df_turnover.resample("M").mean()
     df_turnover.plot(color="steelblue", alpha=1.0, lw=0.5, ax=ax, **kwargs)
-    df_turnover_by_month.plot(color="orangered", alpha=0.5, lw=2, ax=ax, **kwargs)
-    ax.axhline(df_turnover.mean(), color="steelblue", linestyle="--", lw=3, alpha=1.0)
+    df_turnover_by_month.plot(
+        color="orangered", alpha=0.5, lw=2, ax=ax, **kwargs
+    )
+    ax.axhline(
+        df_turnover.mean(), color="steelblue", linestyle="--", lw=3, alpha=1.0
+    )
     ax.legend(
         [
             "Daily turnover",
@@ -1475,6 +1696,14 @@ def plot_turnover(
     ax.set_ylim((0, 2))
     ax.set_ylabel("Turnover")
     ax.set_xlabel("")
+
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
@@ -1484,6 +1713,7 @@ def plot_slippage_sweep(
     transactions,
     slippage_params=(3, 8, 10, 12, 15, 20, 50),
     ax=None,
+    cname=None,
     **kwargs,
 ):
     """
@@ -1531,11 +1761,18 @@ def plot_slippage_sweep(
     ax.set_ylabel("")
 
     ax.legend(loc="center left", frameon=True, framealpha=0.5)
-
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
     return ax
 
 
-def plot_slippage_sensitivity(returns, positions, transactions, ax=None, **kwargs):
+def plot_slippage_sensitivity(
+    returns, positions, transactions, ax=None, cname=None, **kwargs
+):
     """
     Plots curve relating per-dollar slippage to average annual returns.
 
@@ -1564,7 +1801,7 @@ def plot_slippage_sensitivity(returns, positions, transactions, ax=None, **kwarg
     if ax is None:
         ax = plt.gca()
 
-    avg_returns_given_slippage = pd.Series(dtype="float64")
+    avg_returns_given_slippage = pd.Series()
     for bps in range(1, 100):
         adj_returns = txn.adjust_returns_for_slippage(
             returns, positions, transactions, bps
@@ -1579,6 +1816,13 @@ def plot_slippage_sensitivity(returns, positions, transactions, ax=None, **kwarg
     ax.set_ylabel("Average annual return")
     ax.set_xlabel("Per-dollar slippage (bps)")
 
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
@@ -1590,9 +1834,12 @@ def plot_capacity_sweep(
     min_pv=100000,
     max_pv=300000000,
     step_size=1000000,
+    cname=None,
     ax=None,
 ):
-    txn_daily_w_bar = capacity.daily_txns_with_bar_data(transactions, market_data)
+    txn_daily_w_bar = capacity.daily_txns_with_bar_data(
+        transactions, market_data
+    )
 
     captial_base_sweep = pd.Series()
     for start_pv in range(min_pv, max_pv, step_size):
@@ -1612,12 +1859,18 @@ def plot_capacity_sweep(
     ax.set_xlabel("Capital base ($mm)")
     ax.set_ylabel("Sharpe ratio")
     ax.set_title("Capital base performance sweep")
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
 
     return ax
 
 
 def plot_daily_turnover_hist(
-    transactions, positions, turnover_denom="AGB", ax=None, **kwargs
+    transactions, positions, turnover_denom="AGB", ax=None, cname=None, **kwargs
 ):
     """
     Plots a histogram of daily turnover rates.
@@ -1650,10 +1903,18 @@ def plot_daily_turnover_hist(
     sns.histplot(turnover, ax=ax, **kwargs)
     ax.set_title("Distribution of daily turnover rates")
     ax.set_xlabel("Turnover rate")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
-def plot_daily_volume(returns, transactions, ax=None, **kwargs):
+def plot_daily_volume(returns, transactions, ax=None, cname=None, **kwargs):
     """
     Plots trading volume per day vs. date.
 
@@ -1693,11 +1954,19 @@ def plot_daily_volume(returns, transactions, ax=None, **kwargs):
     ax.set_xlim((returns.index[0], returns.index[-1]))
     ax.set_ylabel("Amount of shares traded")
     ax.set_xlabel("")
+
+    # 20231101 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+    
     return ax
 
 
 def plot_txn_time_hist(
-    transactions, bin_minutes=5, tz="America/New_York", ax=None, **kwargs
+    transactions, bin_minutes=5, tz="Asia/Taipei", ax=None, cname=None, **kwargs   # 20230801 (by MRC)  "America/New_York"->Asia/Taipei 否則full tear sheet圖形出不來
 ):
     """
     Plots a histogram of transaction times, binning the times into
@@ -1733,11 +2002,9 @@ def plot_txn_time_hist(
     txn_time.index = txn_time.index.tz_convert(pytz.timezone(tz))
     txn_time.index = txn_time.index.map(lambda x: x.hour * 60 + x.minute)
     txn_time["trade_value"] = (txn_time.amount * txn_time.price).abs()
-    txn_time = (
-        txn_time.groupby(level=0).sum(numeric_only=True).reindex(index=range(570, 961))
-    )
+    txn_time = txn_time.groupby(level=0).sum( numeric_only = True ).reindex(index=range(570, 961))
     txn_time.index = (txn_time.index / bin_minutes).astype(int) * bin_minutes
-    txn_time = txn_time.groupby(level=0).sum(numeric_only=True)
+    txn_time = txn_time.groupby(level=0).sum( numeric_only = True )
 
     txn_time["time_str"] = txn_time.index.map(
         lambda x: str(datetime.time(int(x / 60), x % 60))[:-3]
@@ -1754,6 +2021,14 @@ def plot_txn_time_hist(
     ax.set_title("Transaction time distribution")
     ax.set_ylabel("Proportion")
     ax.set_xlabel("")
+
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+
     return ax
 
 
@@ -1781,7 +2056,7 @@ def show_worst_drawdown_periods(returns, top=5):
     )
 
 
-def plot_monthly_returns_timeseries(returns, ax=None, **kwargs):
+def plot_monthly_returns_timeseries(returns, ax=None, cname=None, **kwargs):
     """
     Plots monthly returns as a timeseries.
 
@@ -1831,11 +2106,16 @@ def plot_monthly_returns_timeseries(returns, ax=None, **kwargs):
     ax.axhline(0.0, color="darkgray", ls="-")
     ax.set_xticks(xticks_coord)
     ax.set_xticklabels(xticks_label)
-
+    # 20231010 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
     return ax
 
 
-def plot_round_trip_lifetimes(round_trips, disp_amount=16, lsize=18, ax=None):
+def plot_round_trip_lifetimes(round_trips, disp_amount=16, lsize=18, ax=None, cname=None):
     """
     Plots timespans and directions of a sample of round trip trades.
 
@@ -1885,12 +2165,20 @@ def plot_round_trip_lifetimes(round_trips, disp_amount=16, lsize=18, ax=None):
     ax.set_ylim((-0.5, min(len(sample), disp_amount) - 0.5))
     blue = patches.Rectangle([0, 0], 1, 1, color="b", label="Long")
     red = patches.Rectangle([0, 0], 1, 1, color="r", label="Short")
-    leg = ax.legend(handles=[blue, red], loc="lower left", frameon=True, framealpha=0.5)
+    leg = ax.legend(
+        handles=[blue, red], loc="lower left", frameon=True, framealpha=0.5
+    )
     leg.get_frame().set_edgecolor("black")
     ax.grid(False)
-
+    
+    # 20231124 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+        
     return ax
-
 
 def show_profit_attribution(round_trips):
     """
@@ -1926,7 +2214,7 @@ def show_profit_attribution(round_trips):
     )
 
 
-def plot_prob_profit_trade(round_trips, ax=None):
+def plot_prob_profit_trade(round_trips, ax=None, cname=None):
     """
     Plots a probability distribution for the event of making
     a profitable trade.
@@ -1949,7 +2237,9 @@ def plot_prob_profit_trade(round_trips, ax=None):
 
     round_trips["profitable"] = round_trips.pnl > 0
 
-    dist = sp.stats.beta(round_trips.profitable.sum(), (~round_trips.profitable).sum())
+    dist = sp.stats.beta(
+        round_trips.profitable.sum(), (~round_trips.profitable).sum()
+    )
     y = dist.pdf(x)
     lower_perc = dist.ppf(0.025)
     upper_perc = dist.ppf(0.975)
@@ -1969,8 +2259,14 @@ def plot_prob_profit_trade(round_trips, ax=None):
     ax.set_xlim(lower_plot, upper_plot)
     ax.set_ylim((0, y.max() + 1.0))
 
+    # 20231124 modify to show chinese name(yo)
+    if cname:
+        _name = sys._getframe(0).f_code.co_name
+        ax.set_ylabel(cname[_name]['ylabel'])
+        ax.set_xlabel(cname[_name]['xlabel'])
+        ax.set_title(cname[_name]['title'])
+        
     return ax
-
 
 def plot_cones(
     name,
@@ -2062,7 +2358,9 @@ def plot_cones(
 
     # Plot returns line graph
     label = "Cumulative returns = {:.2f}%".format((returns.iloc[-1] - 1) * 100)
-    axes.plot(returns.index, returns.values, color="black", lw=2.0, label=label)
+    axes.plot(
+        returns.index, returns.values, color="black", lw=3.0, label=label
+    )
 
     if name is not None:
         axes.set_title(name)
@@ -2073,3 +2371,330 @@ def plot_cones(
         return fig
     else:
         return axes
+
+def plot_mae_mfe(st:str, et:str, stock:str):
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+    """20230920 用來呈現股票在特定時間內的MAE和MFE，紅線為有利方向，綠線為不利方向　Terry"""
+    '''=================================================載入資料區================================================='''
+    from zipline.data import bundles
+    bundle = bundles.load('tquant')
+    adj_price = get_prices(start_date=pd.Timestamp(st, tz='utc'), 
+                        end_date=pd.Timestamp(et, tz='utc'),
+                        field='close',
+                        assets=[bundle.asset_finder.lookup_symbol(stock, None)])
+    stock = bundle.asset_finder.lookup_symbol(stock, None)
+    mae = np.where(adj_price.loc[st: et, stock].pct_change().add(1).cumprod().fillna(1).gt(1) & adj_price.loc[st: et, stock].diff().fillna(0).gt(0), 1,
+            np.where(adj_price.loc[st: et, stock].pct_change().add(1).cumprod().fillna(1).lt(1) & adj_price.loc[st: et, stock].diff().fillna(0).lt(0), -1, 0))
+
+    y = pd.DataFrame(data=adj_price.loc[st: et, stock].values, columns=['price'], index=adj_price.loc[st: et, stock].index)
+
+    y['mae'] = mae
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    '''=================================================畫線區================================================='''
+    ax = y.price.plot(label='調整後收盤價')
+
+    for index, row in y.iterrows():
+        if row.mae > 0:
+            ax.axvline(x=index, ymax=(row.price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), 
+                    ymin=(y.iloc[0].price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), color='red', alpha=0.5)
+
+        elif row.mae < 0:
+            ax.axvline(x=index, ymax=(y.iloc[0].price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), 
+                    ymin=(row.price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), color='green', alpha=0.5)
+            
+    ax.axvline(x=index, ymax=(row.price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), 
+                    ymin=(y.iloc[0].price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), color='red', alpha=0.3, label='有利方向')
+
+    ax.axvline(x=index, ymax=(y.iloc[0].price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), 
+                    ymin=(row.price - ax.get_ylim()[0]) / -(ax.get_ylim()[0] - ax.get_ylim()[1]), color='green', alpha=0.3, label='不利方向')
+
+    '''=================================================畫點區================================================='''
+    ax.scatter(x = [y.price.idxmax()], y=[y.price.max()], marker='*', s=100, color=['red'], label='MFE')
+
+    #標記MFE時間與數值
+    ax.annotate(text=f"{str(y.price.idxmax().date())}:{adj_price.max().div(adj_price.iloc[0]).sub(1).mul(100).values[0]:.2f}%", xy=[y.price.idxmax(), y.price.max()], xytext=(y.price.idxmax(), y.price.max()*1.0005))
+
+    ax.scatter(x = [y.price.idxmin()], y=[y.price.min()], marker='*', s=100, color=['green'], label='MAE')
+
+    #標記MAE時間與數值
+    ax.annotate(text=f"{str(y.price.idxmin().date())}:{adj_price.min().div(adj_price.iloc[0]).sub(1).mul(100).values[0]:.2f}%", xy=[y.price.idxmin(), y.price.min()], xytext=(y.price.idxmin(), y.price.min()*0.9995))
+
+    ax.axhline(y.price[0], color='black', linestyle='--')
+
+    ax.set_title(f'{stock.symbol}在{st}~{et}期間 \n 有利方向(FE)與不利方向(AE)')
+
+    ax.grid(linestyle='--', alpha=0.5)
+
+    ax.legend()
+
+    plt.show()
+
+def ret_count(mae:pd.DataFrame, ax:None):    
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+    """" 20230928 視覺化報酬率累積分布與計算勝率 Terry"""
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+
+    plus_bins = int(len(mae[mae['returns_tot'].gt(0)])/3) if len(mae[mae['returns_tot'].gt(0)]) > 3 else len(mae[mae['returns_tot'].gt(0)])
+    minus_bins = int(len(mae[mae['returns_tot'].le(0)])/3) if len(mae[mae['returns_tot'].le(0)]) > 3 else len(mae[mae['returns_tot'].le(0)])
+
+    ax.hist(x=mae[mae['returns_tot'].gt(0)]['returns_tot'], bins=plus_bins, color='r', label='Profit', width=2)
+    ax.hist(x=mae[mae['returns_tot'].le(0)]['returns_tot'], bins=minus_bins, color='g', label='Loss', width=2)
+
+    min_value = mae['returns_tot'].min()
+    max_value = mae['returns_tot'].max()
+
+    mean = mae['returns_tot'].mean()
+
+    plt.xlim(min_value*1.1, max_value*1.1)
+
+    ax.axvline(x = mean, color='black', linestyle='--', alpha=0.8, label=3)
+
+    ax.set_xlabel('Returns(%)')
+    ax.set_ylabel('Count')
+    ax.set_title(f'Returns Distribution(Win ratio:{len(mae[mae["returns_tot"].gt(0)])/len(mae)*100:.2f}%)', fontsize=15)
+
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles=[handles[0], handles[1], handles[2]], labels=['Profit',  'Loss', f"Avg.R:{mae['returns_tot'].mean():.2f}%"])
+
+def mae_returns(mae:pd.DataFrame, ax:None):    
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+    """" 20230928 視覺化報酬率與MAE的分布圖 Terry"""
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+
+    scatter_size = 10 if mae.returns_tot.abs().max() <= 100 else 1
+    ax.scatter(x=mae[mae.returns_tot.gt(0)].returns_tot, 
+                y=mae[mae.returns_tot.gt(0)].MAE.abs(), 
+                s=mae[mae.returns_tot.gt(0)].returns_tot.mul(scatter_size).abs(),
+                color='r', alpha=0.9, edgecolor='white', marker='*', zorder=2, label='Profit')
+    
+    ax.scatter(x=mae[mae.returns_tot.le(0)].returns_tot, 
+                y=mae[mae.returns_tot.le(0)].MAE.abs(), 
+                s=mae[mae.returns_tot.le(0)].returns_tot.mul(scatter_size).abs(),
+                color='g', alpha=0.9, edgecolor='white', marker='X', zorder=2, label='Loss')
+
+
+    ax.axhline(mae[mae.returns_tot.le(0)].MAE.abs().quantile(0.75), linestyle='--', color='g', alpha=0.5, label='3')
+
+    ax.axhline(mae[mae.returns_tot.gt(0)].MAE.abs().quantile(0.75), linestyle='--', color='r', alpha=0.5, label='4')
+
+
+    plt.xlim(mae.returns_tot.min()*1.1, mae.returns_tot.max()*1.1)
+
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles=[handles[0], handles[3], handles[1], handles[2]], labels=['Profit',  
+                                                                                f"P.Q3:{mae[mae.returns_tot.gt(0)].MAE.abs().quantile(0.75):.2f}%",
+                                                                                'Loss',
+                                                                                f"L.Q3:{mae[mae.returns_tot.le(0)].MAE.abs().quantile(0.75):.2f}%" 
+                                                                                ])
+
+    ax.set_title('MAE & Returns Distribution', fontsize=15)
+    ax.set_xlabel('Returns(%)')
+    ax.set_ylabel('MAE(%)')
+
+def mdd_profit(mae:pd.DataFrame, ax:None):    
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+    """" 20230928 視覺化報酬率與MDD的分布圖 Terry"""
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+        
+    scatter_size = 10 if mae.returns_tot.abs().max() <= 100 else 1
+    ax.scatter(x=mae[mae.returns_tot.gt(0)].MDD.abs(), 
+                y=mae[mae.returns_tot.gt(0)].returns_tot, 
+                s=mae[mae.returns_tot.gt(0)].returns_tot.mul(scatter_size).abs(),
+                color='r', alpha=0.9, edgecolor='white', marker='*', zorder=2, label='Profit')
+    
+    ax.scatter(x=mae[mae.returns_tot.le(0)].MDD.abs(), 
+                y=mae[mae.returns_tot.le(0)].returns_tot.abs(), 
+                s=mae[mae.returns_tot.le(0)].returns_tot.mul(scatter_size).abs(),
+                color='g', alpha=0.9, edgecolor='white', marker='X', zorder=2, label='Loss')
+
+    ax.set_xlabel('MDD(%)')
+
+    ax.set_ylabel('Returns(%)')
+
+    xlimit = int(abs(mae.returns_tot.max()) if abs(mae.returns_tot.max()) > abs(mae.MDD.min()) else abs(mae.MDD.min())*1.2)
+
+    plt.xlim(0, xlimit if xlimit <= 100 else 100)
+    plt.ylim(0, xlimit*1.1)
+
+    ax.plot([0, xlimit if xlimit <= 100 else 100], [0, xlimit if xlimit <= 100 else 100], color = 'black', linewidth = 2, linestyle='--', zorder=-1)
+
+    ax.set_title('MDD & Returns Distribution')
+
+    ax.legend()
+
+def mae_gmfe(mae:pd.DataFrame, ax:None):    
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+    """" 20230928 視覺化MAE與GMFE的分布圖 Terry"""
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+        
+    scatter_size = 10 if mae.returns_tot.abs().max() <= 100 else 1
+    ax.scatter(x=mae[mae.returns_tot.gt(0)].MAE.abs(), 
+            y=mae[mae.returns_tot.gt(0)].GMFE, 
+            s=mae[mae.returns_tot.gt(0)].returns_tot.mul(scatter_size).abs(),
+            color='r', alpha=0.9, edgecolor='white', marker='*', zorder=2, label='Profit')
+        
+    ax.scatter(x=mae[mae.returns_tot.le(0)].MAE.abs(), 
+                y=mae[mae.returns_tot.le(0)].GMFE, 
+                s=mae[mae.returns_tot.le(0)].returns_tot.mul(scatter_size).abs(),
+                color='g', alpha=0.9, edgecolor='white', marker='X', zorder=2, label='Loss')
+
+
+
+    plt.xlim(mae.MAE.abs().min()*1.1, mae.MAE.abs().max()*1.1)
+
+    ax.legend()
+    ax.set_title('MAE & GMFE Distribution', fontsize=15)
+    ax.set_xlabel('MAE(%)')
+    ax.set_ylabel('GMFE(%)')
+
+def mae_bmfe(mae:pd.DataFrame, ax:None):    
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+    """" 20230928 視覺化MAE與BMFE的分布圖 Terry"""
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+        
+    scatter_size = 10 if mae.returns_tot.abs().max() <= 100 else 1
+    ax.scatter(x=mae[mae.returns_tot.gt(0)].MAE.abs(), 
+                y=mae[mae.returns_tot.gt(0)].BMFE, 
+                s=mae[mae.returns_tot.gt(0)].returns_tot.mul(scatter_size).abs(),
+                color='r', alpha=0.9, edgecolor='white', marker='*', zorder=2, label='Profit')
+    
+    ax.scatter(x=mae[mae.returns_tot.le(0)].MAE.abs(), 
+            y=mae[mae.returns_tot.le(0)].BMFE, 
+            s=mae[mae.returns_tot.le(0)].returns_tot.mul(scatter_size).abs(),
+            color='g', alpha=0.9, edgecolor='white', marker='X', zorder=2, label='Loss')
+
+    plt.xlim(mae.MAE.abs().min()*1.1, mae.MAE.abs().max()*1.1)
+
+    ax.legend()
+    ax.set_title('MAE & BMFE Distribution', fontsize=15)
+    ax.set_xlabel('MAE(%)')
+    ax.set_ylabel('BMFE(%)')
+
+def plot_edge(mae:pd.DataFrame, ax:None):
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+
+    """" 20230928 視覺化優勢比率趨勢圖 Terry"""
+    if ax == None:
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+        
+    x = mae['prices'].apply(lambda x: pd.Series(x)).T
+
+    x.cummax().div(x.iloc[0]).sum(axis=1).div(x.cummin().div(x.iloc[0]).sum(axis=1)).plot(
+        title='Edge Ratio Trend',
+        xlabel='Days',
+        ylabel='Edge ratio',
+        color='deepskyblue',
+        ax=ax)
+
+    ax.set_xlim(1, len(x))
+    ax.set_xticks(labels=[i for i in range(1, len(x)+1, int(len(x)/10))], ticks=[i for i in range(1, len(x)+1, int(len(x)/10))])
+
+def dist_mae_gmfe_bmfe(mae:pd.DataFrame, ax1:None, ax2:None, ax3:None):    
+    """" 20230928 視覺化MAE, GMFE, BMFE等累積分布圖 Terry"""
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+
+    if ax1 == None or ax2 == None or ax3 == None:
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+
+    mae['profit'] = np.where(mae['returns_tot'] > 0, 'Profit', 'Loss')
+    mae_q3_p = mae.query('profit=="Profit"')['MAE'].abs().quantile(0.75)
+    mae_q3_l = mae.query('profit=="Loss"')['MAE'].abs().quantile(0.75)
+    gmfe_q3_p = mae.query('profit=="Profit"')['GMFE'].abs().quantile(0.75)
+    gmfe_q3_l = mae.query('profit=="Loss"')['GMFE'].abs().quantile(0.75)
+    bmfe_q3_p = mae.query('profit=="Profit"')['BMFE'].abs().quantile(0.75)
+    bmfe_q3_l = mae.query('profit=="Loss"')['BMFE'].abs().quantile(0.75)
+
+    sns.histplot(mae, x=mae['MAE'].abs(), hue='profit', palette={'Profit': 'r', 'Loss': 'g'}, multiple='dodge', ax=ax1, label='0', alpha=0.8)
+    ax1.axvline(x=mae_q3_p, linestyle='--', color='coral', linewidth=2, label=[3])
+    ax1.axvline(x=mae_q3_l, linestyle='--', color='dodgerblue', linewidth=2, label=[4])
+
+    ax1.set_xlim([mae['MAE'].abs().min()*1.1, mae['MAE'].abs().max()*1.1])
+    ax1.set_xlabel('MAE(%)')
+    ax1.set_title('MAE(%) Distribution')
+
+    #===============================================================================================================================================================
+    sns.histplot(mae, x=mae['GMFE'].abs(), hue='profit', palette={'Profit': 'r', 'Loss': 'g'}, multiple='dodge', ax=ax2, label='0', alpha=0.8)
+    ax2.axvline(x=gmfe_q3_p, linestyle='--', color='coral', linewidth=2, label=[3])
+    ax2.axvline(x=gmfe_q3_l, linestyle='--', color='dodgerblue', linewidth=2, label=[4])
+
+    ax2.set_xlim([mae['GMFE'].abs().min()*1.1, mae['GMFE'].abs().max()*1.1])
+    ax2.set_xlabel('GMFE(%)')
+    ax2.set_title('GMFE(%) Distribution')
+
+    #===============================================================================================================================================================
+    sns.histplot(mae, x=mae['BMFE'].abs(), hue='profit', palette={'Profit': 'r', 'Loss': 'g'}, multiple='dodge', ax=ax3, label='0', alpha=0.8)
+    ax3.axvline(x=bmfe_q3_p, linestyle='--', color='coral', linewidth=2, label=[3])
+    ax3.axvline(x=bmfe_q3_l, linestyle='--', color='dodgerblue', linewidth=2, label=[4])
+
+    ax3.set_xlim([mae['BMFE'].abs().min()*1.1, mae['BMFE'].abs().max()*1.1])
+    ax3.set_xlabel('BMFE(%)')
+    ax3.set_title('BMFE(%) Distribution')
+
+    #===============================================================================================================================================================
+    handles, labels = ax1.get_legend_handles_labels()
+    ax1.legend(handles=[handles[2], handles[0], handles[3], handles[1]], labels=['Profit',  f"P.Q3:{mae_q3_p:.2f}%", 'Loss', f"L.Q3:{mae_q3_l:.2f}%"])
+
+    handles, labels = ax2.get_legend_handles_labels()
+    ax2.legend(handles=[handles[2], handles[0], handles[3], handles[1]], labels=['Profit', f"P.Q3:{gmfe_q3_p:.2f}%", 'Loss', f"L.Q3:{gmfe_q3_l:.2f}%"])
+
+    handles, labels = ax3.get_legend_handles_labels()
+    ax3.legend(handles=[handles[2], handles[0], handles[3], handles[1]], labels=['Profit', f"P.Q3:{bmfe_q3_p:.2f}%", 'Loss', f"L.Q3:{bmfe_q3_l:.2f}%"])
+
+def plot_all_mae(mae):  
+    """" 20230928 呼叫前述所有圖表一次呈現 Terry"""
+    import matplotlib as mat
+    mat.rcParams['axes.unicode_minus'] = False
+
+    import matplotlib
+    matplotlib.style.use('ggplot')
+
+    fig, ax = plt.subplots(3, 3, figsize=(12, 12))
+
+    ret_count(mae, ax=ax[0, 0])
+    plot_edge(mae, ax=ax[0, 1])
+    mae_returns(mae, ax=ax[0, 2])
+    mae_gmfe(mae, ax=ax[1, 0])
+    mae_bmfe(mae, ax=ax[1, 1])
+    mdd_profit(mae, ax=ax[1, 2])
+    dist_mae_gmfe_bmfe(mae, ax1=ax[2, 0], ax2=ax[2, 1], ax3=ax[2, 2])
+
+    fig.tight_layout()

@@ -2,15 +2,13 @@ import numpy as np
 import pandas as pd
 import unittest
 import warnings
-from pathlib import Path
+
 import empyrical as ep
 from pyfolio.perf_attrib import (
     perf_attrib,
     create_perf_attrib_stats,
     _cumulative_returns_less_costs,
 )
-
-TEST_DATA = Path(__file__).parent / "test_data"
 
 
 def _empyrical_compat_perf_attrib_result(index, columns, data):
@@ -29,7 +27,9 @@ def _empyrical_compat_perf_attrib_result(index, columns, data):
     return pd.DataFrame(index=index, columns=columns, data=data)
 
 
-def generate_toy_risk_model_output(start_date="2017-01-01", periods=10, num_styles=2):
+def generate_toy_risk_model_output(
+    start_date="2017-01-01", periods=10, num_styles=2
+):
     """
     Generate toy risk model output.
 
@@ -128,7 +128,9 @@ class PerfAttribTestCase(unittest.TestCase):
             data={"stock1": [20, 20], "stock2": [50, 50], "cash": [0, 0]},
         )
 
-        index = pd.MultiIndex.from_product([dts, tickers], names=["dt", "ticker"])
+        index = pd.MultiIndex.from_product(
+            [dts, tickers], names=["dt", "ticker"]
+        )
 
         factor_loadings = pd.DataFrame(
             columns=styles,
@@ -171,9 +173,13 @@ class PerfAttribTestCase(unittest.TestCase):
             returns, positions, factor_returns, factor_loadings
         )
 
-        pd.testing.assert_frame_equal(expected_perf_attrib_output, perf_attrib_output)
+        pd.util.testing.assert_frame_equal(
+            expected_perf_attrib_output, perf_attrib_output
+        )
 
-        pd.testing.assert_frame_equal(expected_exposures_portfolio, exposures_portfolio)
+        pd.util.testing.assert_frame_equal(
+            expected_exposures_portfolio, exposures_portfolio
+        )
 
         # test long and short positions
         positions = pd.DataFrame(
@@ -213,9 +219,13 @@ class PerfAttribTestCase(unittest.TestCase):
             data={"risk_factor1": [0.0, 0.0], "risk_factor2": [0.0, 0.0]},
         )
 
-        pd.testing.assert_frame_equal(expected_perf_attrib_output, perf_attrib_output)
+        pd.util.testing.assert_frame_equal(
+            expected_perf_attrib_output, perf_attrib_output
+        )
 
-        pd.testing.assert_frame_equal(expected_exposures_portfolio, exposures_portfolio)
+        pd.util.testing.assert_frame_equal(
+            expected_exposures_portfolio, exposures_portfolio
+        )
 
         perf_attrib_summary, exposures_summary = create_perf_attrib_stats(
             perf_attrib_output, exposures_portfolio
@@ -231,7 +241,7 @@ class PerfAttribTestCase(unittest.TestCase):
             perf_attrib_summary["Total Returns"],
         )
 
-        pd.testing.assert_frame_equal(
+        pd.util.testing.assert_frame_equal(
             exposures_summary,
             pd.DataFrame(
                 0.0,
@@ -247,7 +257,7 @@ class PerfAttribTestCase(unittest.TestCase):
     def test_perf_attrib_regression(self):
 
         positions = pd.read_csv(
-            TEST_DATA / "positions.csv",
+            "pyfolio/tests/test_data/positions.csv",
             index_col=0,
             parse_dates=True,
         )
@@ -257,26 +267,27 @@ class PerfAttribTestCase(unittest.TestCase):
         ]
 
         returns = pd.read_csv(
-            TEST_DATA / "returns.csv",
+            "pyfolio/tests/test_data/returns.csv",
             index_col=0,
             parse_dates=True,
             header=None,
-        ).squeeze()
+            squeeze=True,
+        )
 
         factor_loadings = pd.read_csv(
-            TEST_DATA / "factor_loadings.csv",
+            "pyfolio/tests/test_data/factor_loadings.csv",
             index_col=[0, 1],
             parse_dates=True,
         )
 
         factor_returns = pd.read_csv(
-            TEST_DATA / "factor_returns.csv",
+            "pyfolio/tests/test_data/factor_returns.csv",
             index_col=0,
             parse_dates=True,
         )
 
         residuals = pd.read_csv(
-            TEST_DATA / "residuals.csv",
+            "pyfolio/tests/test_data/residuals.csv",
             index_col=0,
             parse_dates=True,
         )
@@ -284,10 +295,11 @@ class PerfAttribTestCase(unittest.TestCase):
         residuals.columns = [int(col) for col in residuals.columns]
 
         intercepts = pd.read_csv(
-            TEST_DATA / "intercepts.csv",
+            "pyfolio/tests/test_data/intercepts.csv",
             index_col=0,
             header=None,
-        ).squeeze()
+            squeeze=True,
+        )
 
         risk_exposures_portfolio, perf_attrib_output = perf_attrib(
             returns,
@@ -302,12 +314,16 @@ class PerfAttribTestCase(unittest.TestCase):
 
         # since all returns are factor returns, common returns should be
         # equivalent to total returns, and specific returns should be 0
-        pd.testing.assert_series_equal(returns, common_returns, check_names=False)
+        pd.util.testing.assert_series_equal(
+            returns, common_returns, check_names=False
+        )
 
         self.assertTrue(np.isclose(specific_returns, 0).all())
 
         # specific and common returns combined should equal total returns
-        pd.testing.assert_series_equal(returns, combined_returns, check_names=False)
+        pd.util.testing.assert_series_equal(
+            returns, combined_returns, check_names=False
+        )
 
         # check that residuals + intercepts = specific returns
         self.assertTrue(np.isclose((residuals + intercepts), 0).all())
@@ -317,13 +333,13 @@ class PerfAttribTestCase(unittest.TestCase):
             factor_returns, axis="rows"
         ).sum(axis="columns")
 
-        pd.testing.assert_series_equal(
+        pd.util.testing.assert_series_equal(
             expected_common_returns, common_returns, check_names=False
         )
 
         # since factor loadings are ones, portfolio risk exposures
         # should be ones
-        pd.testing.assert_frame_equal(
+        pd.util.testing.assert_frame_equal(
             risk_exposures_portfolio,
             pd.DataFrame(
                 np.ones_like(risk_exposures_portfolio),
@@ -374,7 +390,7 @@ class PerfAttribTestCase(unittest.TestCase):
         avg_factor_exposure = risk_exposures_portfolio.mean().rename(
             "Average Risk Factor Exposure"
         )
-        pd.testing.assert_series_equal(
+        pd.util.testing.assert_series_equal(
             avg_factor_exposure,
             exposures_summary["Average Risk Factor Exposure"],
         )
@@ -388,7 +404,7 @@ class PerfAttribTestCase(unittest.TestCase):
             index=risk_exposures_portfolio.columns,
         )
 
-        pd.testing.assert_series_equal(
+        pd.util.testing.assert_series_equal(
             cumulative_returns_by_factor,
             exposures_summary["Cumulative Return"],
         )
@@ -402,7 +418,7 @@ class PerfAttribTestCase(unittest.TestCase):
             index=risk_exposures_portfolio.columns,
         )
 
-        pd.testing.assert_series_equal(
+        pd.util.testing.assert_series_equal(
             annualized_returns_by_factor,
             exposures_summary["Annualized Return"],
         )
@@ -417,7 +433,9 @@ class PerfAttribTestCase(unittest.TestCase):
         ) = generate_toy_risk_model_output()
 
         # factor loadings missing a stock should raise a warning
-        factor_loadings_missing_stocks = factor_loadings.drop("TLT", level="ticker")
+        factor_loadings_missing_stocks = factor_loadings.drop(
+            "TLT", level="ticker"
+        )
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always", UserWarning)
@@ -432,10 +450,13 @@ class PerfAttribTestCase(unittest.TestCase):
             w_ = [warn for warn in w if issubclass(warn.category, UserWarning)]
             self.assertEqual(len(w_), 1)
             self.assertIn(
-                "The following assets were missing factor loadings: " "['TLT']",
+                "The following assets were missing factor loadings: "
+                "['TLT']",
                 str(w_[-1].message),
             )
-            self.assertIn("Ratio of assets missing: 0.333", str(w_[-1].message))
+            self.assertIn(
+                "Ratio of assets missing: 0.333", str(w_[-1].message)
+            )
 
             # missing dates should raise a warning
             missing_dates = ["2017-01-01", "2017-01-05"]
@@ -492,10 +513,13 @@ class PerfAttribTestCase(unittest.TestCase):
             w_ = [warn for warn in w if issubclass(warn.category, UserWarning)]
             self.assertEqual(len(w_), 5)
             self.assertIn(
-                "The following assets were missing factor loadings: " "['TLT']",
+                "The following assets were missing factor loadings: "
+                "['TLT']",
                 str(w_[-2].message),
             )
-            self.assertIn("Ratio of assets missing: 0.333", str(w_[-2].message))
+            self.assertIn(
+                "Ratio of assets missing: 0.333", str(w_[-2].message)
+            )
 
             self.assertIn(
                 "Could not find factor loadings for "
@@ -556,17 +580,19 @@ class PerfAttribTestCase(unittest.TestCase):
 
     def test_cumulative_returns_less_costs(self):
 
-        returns = pd.Series([0.1] * 3, index=pd.date_range("2017-01-01", periods=3))
+        returns = pd.Series(
+            [0.1] * 3, index=pd.date_range("2017-01-01", periods=3)
+        )
         cost = pd.Series([0.001] * len(returns), index=returns.index)
 
         expected_returns = pd.Series([0.1, 0.21, 0.331], index=returns.index)
-        pd.testing.assert_series_equal(
+        pd.util.testing.assert_series_equal(
             expected_returns, _cumulative_returns_less_costs(returns, None)
         )
 
         expected_returns = pd.Series(
             [0.099000, 0.207801, 0.327373], index=returns.index
         )
-        pd.testing.assert_series_equal(
+        pd.util.testing.assert_series_equal(
             expected_returns, _cumulative_returns_less_costs(returns, cost)
         )

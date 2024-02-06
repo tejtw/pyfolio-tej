@@ -12,14 +12,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from math import copysign
+from re import split
 import warnings
 from collections import deque, OrderedDict
-from math import copysign
+from zipline.master import get_prices
+import matplotlib.pyplot as plt
+plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei'] 
 
-import numpy as np
 import pandas as pd
+import numpy as np
+import os
 
-from .utils import print_table, format_asset
+import dask.dataframe as dd
+from dask.distributed import Client
+import webbrowser
+import psutil
+
+
+from .utils import print_table, format_asset, extract_rets_pos_txn_from_zipline
 
 PNL_STATS = [
     ("Total profit", lambda x: x.sum()),
@@ -116,12 +127,13 @@ def _groupby_consecutive(txn, max_delta=pd.Timedelta("8h")):
     transactions : pd.DataFrame
 
     """
-
     def vwap(transaction):
         if transaction.amount.sum() == 0:
             warnings.warn("Zero transacted shares, setting vwap to nan.")
             return np.nan
-        return (transaction.amount * transaction.price).sum() / transaction.amount.sum()
+        return (
+            transaction.amount * transaction.price
+        ).sum() / transaction.amount.sum()
 
     out = []
     for _, t in txn.groupby("symbol"):
@@ -130,8 +142,12 @@ def _groupby_consecutive(txn, max_delta=pd.Timedelta("8h")):
         t = t.reset_index()
 
         t["order_sign"] = t.amount > 0
-        t["block_dir"] = (t.order_sign.shift(1) != t.order_sign).astype(int).cumsum()
-        t["block_time"] = ((t.dt.sub(t.dt.shift(1))) > max_delta).astype(int).cumsum()
+        t["block_dir"] = (
+            (t.order_sign.shift(1) != t.order_sign).astype(int).cumsum()
+        )
+        t["block_time"] = (
+            ((t.dt.sub(t.dt.shift(1))) > max_delta).astype(int).cumsum()
+        )
         grouped_price = t.groupby(["block_dir", "block_time"]).apply(vwap)
         grouped_price.name = "price"
         grouped_rest = t.groupby(["block_dir", "block_time"]).agg(
@@ -146,8 +162,7 @@ def _groupby_consecutive(txn, max_delta=pd.Timedelta("8h")):
     out = out.set_index("dt")
     return out
 
-
-def extract_round_trips(transactions, portfolio_value=None):
+def extract_round_trips(returns:pd.Series, transactions:pd.DataFrame, positions:pd.DataFrame, dask_mode=True, n_workers_discount=1, npartitions=100):
     """Group transactions into "round trips". First, transactions are
     grouped by day and directionality. Then, long and short
     transactions are matched to create round-trip round_trips for which
@@ -178,14 +193,26 @@ def extract_round_trips(transactions, portfolio_value=None):
 
     Parameters
     ----------
+    returns : pd.Series
+        原始的報酬率序列資料
+
     transactions : pd.DataFrame
         Prices and amounts of executed round_trips. One row per trade.
         - See full explanation in tears.create_full_tear_sheet
 
-    portfolio_value : pd.Series (optional)
+    positions : pd.DataFrame
         Portfolio value (all net assets including cash) over time.
         Note that portfolio_value needs to beginning of day, so either
         use .shift() or positions.sum(axis='columns') / (1+returns).
+    
+    dask_mode : Bool
+        是否開啟平行化運算功能
+
+    n_workers_discount : float
+        設定平行化使用的核心數，設為1即使用全核心去計算，0.5即設定一半核心數
+
+    npartitions : int
+        dask.DataFrame用以將df拆分成N個分區，利於後續平行化計算使用
 
     Returns
     -------
@@ -194,51 +221,169 @@ def extract_round_trips(transactions, portfolio_value=None):
         contains returns in respect to the portfolio value while
         rt_returns are the returns in regards to the invested capital
         into that partiulcar round-trip.
-    """
 
-    transactions = _groupby_consecutive(transactions)
-    roundtrips = []
+    20230927 大幅修正roundtrips在遭遇股票股利,分割,現增等股數變動之情況 Terry
+    20230928 微調在清倉當天才發現以前有split ratio的情況, 額外在清倉當天計算以前split ratio對持股總數的影響
+    20231031 修正遭遇減資時的調整，此前版本無針對國內減資進行特別調整
+    20231227 新增dask模式用以加速大型回測結果，並且整合add_closing_transactions和_groupby_consecutive"""
 
-    for sym, trans_sym in transactions.groupby("symbol"):
+    dt_transactions = _groupby_consecutive(transactions.drop('dt', axis=1))
+    closing_transactions = add_closing_transactions(positions, dt_transactions)
+    portfolio_value = positions.sum(axis='columns') / (1 + returns)
+
+    def get_round_trips(trans_sym):
+        
+        from zipline.data import bundles
+        bundle = bundles.load('tquant')
+        
+        roundtrips = []
+
         trans_sym = trans_sym.sort_index()
-        price_stack = deque()
-        dt_stack = deque()
+        price_stack, dt_stack = deque(), deque()
+
         trans_sym["signed_price"] = trans_sym.price * np.sign(trans_sym.amount)
         trans_sym["abs_amount"] = trans_sym.amount.abs().astype(int)
-        for dt, t in trans_sym.iterrows():
-            if t.price < 0:
-                warnings.warn("Negative price detected, ignoring for" "round-trip.")
-                continue
 
+        cal = bundle.equity_daily_bar_reader.sessions 
+        initial_date = trans_sym.index[0]
+
+        for dt, t in trans_sym.iterrows():
+
+            split_ratio = 0
+            period = cal[(cal >= str(initial_date.date())) & (cal <= str(dt.date()))]
+
+            split_info = bundle.adjustment_reader.load_adjustments(
+                                dates=period,
+                                assets=pd.Index([trans_sym.symbol[0].sid] , dtype = "int64"),
+                                should_include_splits=True,
+                                should_include_mergers=True,
+                                should_include_dividends=True,
+                                adjustment_type='volume')['volume']
+
+            if t.price < 0:
+                warnings.warn(
+                    "Negative price detected, ignoring for" "round-trip."
+                )
+                continue
+            
             indiv_prices = [t.signed_price] * t.abs_amount
-            if (len(price_stack) == 0) or (
-                copysign(1, price_stack[-1]) == copysign(1, t.amount)
-            ):
+
+            if ((len(price_stack) == 0) or (copysign(1, price_stack[-1]) == copysign(1, t.amount))) and len(split_info) != 0:
+
+                if len(split_info) == 1:
+
+                    split_ratio = split_info[list(split_info.keys())[0]][0].value
+
+                else: # 20230927若兩筆交易中間存有兩次以上的split ratio事件
+                    all_ratio = [split_info[key][0].value for key in split_info.keys()]
+
+                    from functools import reduce
+
+                    split_ratio = reduce(lambda x, y: x * y, all_ratio)
+
+                if split_ratio > 1: #20231030股票股利、股票分割 Terry
+
+                    stock_dividends = int(len(price_stack) * (split_ratio - 1))
+
+                    price_stack.extend([0] * stock_dividends)
+
+                    price_stack.extend(indiv_prices)
+
+                    price_stack = deque([np.mean(price_stack)] * len(price_stack)) #20231120 調整收到股票股利時的平均成本，以更好反應整體持倉成本，也避免後續計算returns出錯
+
+                    dt_stack.extend([dt] * (len(indiv_prices) + stock_dividends))
+
+                elif split_ratio < 1: #20231030減資 Terry
+                        
+                    tmp = pd.DataFrame(list(price_stack), columns=['price']).join(pd.DataFrame(list(dt_stack), columns=['dt']))
+                    
+                    tmp = tmp.value_counts().to_frame('counts').sort_index(level=1).reset_index()
+
+                    tmp['counts'] = tmp['counts'].mul(split_ratio).round().astype(int)
+
+                    price_stack, dt_stack = deque(), deque()
+
+                    for i in [[tmp.loc[i, 'dt']] * tmp.loc[i, 'counts'] for i in tmp.index]:
+                        dt_stack.extend(i)
+
+                    for i in [[tmp.loc[i, 'price']] * tmp.loc[i, 'counts'] for i in tmp.index]:
+                        price_stack.extend(i)
+
+                if len(price_stack) == 0: #20231111 避免個股在庫存為0時遇到減資調整，卻沒有新增股票進庫存 Terry
+
+                    price_stack.extend(indiv_prices)
+
+                    dt_stack.extend([dt] * (len(indiv_prices)))
+
+            # 20230927若一開始沒倉位(price_stack=0)或是最新的成本價與建倉數正負號相同(意味加倉)，則將最新一期的成本價加入price_stack中
+            elif ((len(price_stack) == 0) or (copysign(1, price_stack[-1]) == copysign(1, t.amount))) and len(split_info) == 0:
+                
                 price_stack.extend(indiv_prices)
+
                 dt_stack.extend([dt] * len(indiv_prices))
+
             else:
-                # Close round-trip
+                # 20230928若在出清當天之前有split ratio，則計算出賣出之前的split ratio對持股數的影響
+                if (copysign(1, price_stack[-1]) != copysign(1, t.amount)) and len(split_info) != 0:
+
+                    if len(split_info) == 1:
+
+                        split_ratio = split_info[list(split_info.keys())[0]][0].value
+
+                    else: 
+                        all_ratio = [split_info[key][0].value for key in split_info.keys()]
+
+                        from functools import reduce
+
+                        split_ratio = reduce(lambda x, y: x * y, all_ratio)
+
+                    if split_ratio > 1: #20231030股票股利、股票分割 Terry
+
+                        stock_dividends = int(len(price_stack) * (split_ratio - 1))
+
+                        price_stack.extend([0] * stock_dividends)
+
+                        price_stack = deque([np.mean(price_stack)] * len(price_stack)) #20231120 調整收到股票股利時的平均成本，以更好反應整體持倉成本，也避免後續計算returns出錯
+
+                        dt_stack.extend([dt] * stock_dividends)
+
+                    elif split_ratio < 1: #20231030減資 Terry
+                        
+                        tmp = pd.DataFrame(list(price_stack), columns=['price']).join(pd.DataFrame(list(dt_stack), columns=['dt']))
+                        
+                        tmp = tmp.value_counts().to_frame('counts').sort_index(level=1).reset_index()
+
+                        tmp['counts'] = tmp['counts'].mul(split_ratio).round().astype(int)
+
+                        price_stack, dt_stack = deque(), deque()
+
+                        for i in [[tmp.loc[i, 'dt']] * tmp.loc[i, 'counts'] for i in tmp.index]:
+                            dt_stack.extend(i)
+
+                        for i in [[tmp.loc[i, 'price']] * tmp.loc[i, 'counts'] for i in tmp.index]:
+                            price_stack.extend(i)
+
                 pnl = 0
                 invested = 0
                 cur_open_dts = []
 
                 for price in indiv_prices:
-                    if len(price_stack) != 0 and (
-                        copysign(1, price_stack[-1]) != copysign(1, price)
-                    ):
-                        # Retrieve first dt, stock-price pair from
-                        # stack
+                    
+                    if len(price_stack) != 0 and (copysign(1, price_stack[-1]) != copysign(1, price)):
+                        
                         prev_price = price_stack.popleft()
                         prev_dt = dt_stack.popleft()
 
                         pnl += -(price + prev_price)
+
                         cur_open_dts.append(prev_dt)
                         invested += abs(prev_price)
 
                     else:
-                        # Push additional stock-prices onto stack
+
                         price_stack.append(price)
                         dt_stack.append(dt)
+                
 
                 roundtrips.append(
                     {
@@ -247,11 +392,43 @@ def extract_round_trips(transactions, portfolio_value=None):
                         "close_dt": dt,
                         "long": price < 0,
                         "rt_returns": pnl / invested,
-                        "symbol": sym,
+                        "symbol": trans_sym.symbol[0].symbol,
                     }
                 )
+            initial_date = dt
 
-    roundtrips = pd.DataFrame(roundtrips)
+        return pd.DataFrame(roundtrips)
+
+    if dask_mode:
+
+        n_workers = int(psutil.cpu_count(logical=False) * n_workers_discount)
+
+        client = Client(processes=True, n_workers=n_workers, threads_per_worker=1)
+
+        webbrowser.open(client.dashboard_link)
+
+        dd_transactions = dd.from_pandas(closing_transactions, npartitions=npartitions)
+
+        meta = {
+                'pnl': 'f8',
+                'open_dt': 'datetime64[ns, UTC]',
+                'close_dt': 'datetime64[ns, UTC]',
+                'long': 'bool',
+                'rt_returns': 'f8',
+                'symbol':'object',
+                }
+        
+        tmp_roundtrips = dd_transactions.groupby('symbol').apply(lambda x: get_round_trips(x), meta=meta).compute()
+
+        roundtrips = tmp_roundtrips.drop(columns=['symbol']).droplevel(1).reset_index()
+        
+    else:
+        from tqdm.notebook import tqdm
+
+        tqdm.pandas(desc='交易紀錄計算中')
+
+        roundtrips = closing_transactions.groupby("symbol").progress_apply(lambda x: get_round_trips(x))
+
 
     roundtrips["duration"] = roundtrips["close_dt"].sub(roundtrips["open_dt"])
 
@@ -265,19 +442,22 @@ def extract_round_trips(transactions, portfolio_value=None):
             lambda x: x.replace(hour=0, minute=0, second=0)
         )
 
-        tmp = (
+        roundtrips = (
             roundtrips.set_index("date")
             .join(pv.set_index("date"), lsuffix="_")
             .reset_index()
         )
 
-        roundtrips["returns"] = tmp.pnl / tmp.portfolio_value
-        roundtrips = roundtrips.drop("date", axis="columns")
+        #20230920 移除原本join後是另設一個tmp的變數，但原本roundtrips["returns"] = tmp.pnl/tmp.portfolio_value會不對齊，導致出現pnl為負但returns為正，反之亦然的現象 Terry
+        roundtrips["returns"] = roundtrips.pnl / roundtrips.portfolio_value
+        roundtrips = roundtrips.drop(["date", "portfolio_value"], axis=1)
 
     return roundtrips
 
 
 def add_closing_transactions(positions, transactions):
+    #20230919 原本的計算方式為剩餘投組價值除以剩餘股數，反推出結算股價，但此方法若面臨到股票分割和股票股利問題就會嚴重錯誤
+    #因此改用投組總價值/結束當天(回測結束日期的前一天)之收盤價，得出應該清倉的股數
     """
     Appends transactions that close out all positions at the end of
     the timespan covered by positions data. Utilizes pricing information
@@ -296,6 +476,8 @@ def add_closing_transactions(positions, transactions):
     closed_txns : pd.DataFrame
         Transactions with closing transactions appended.
     """
+    from zipline.data import bundles
+    bundle = bundles.load('tquant')
 
     closed_txns = transactions[["symbol", "amount", "price"]]
 
@@ -303,18 +485,21 @@ def add_closing_transactions(positions, transactions):
     open_pos = pos_at_end.replace(0, np.nan).dropna()
     # Add closing round_trips one second after the close to be sure
     # they don't conflict with other round_trips executed at that time.
-    end_dt = open_pos.name + pd.Timedelta(seconds=1)
+    end_dt = open_pos.name + pd.Timedelta(hours=13, minutes=30)
 
     for sym, ending_val in open_pos.items():
         txn_sym = transactions[transactions.symbol == sym]
 
-        ending_amount = txn_sym.amount.sum()
+        close_price = bundle.equity_daily_bar_reader.load_raw_arrays(columns=['close'],
+                                                start_date=pd.Timestamp(open_pos.name.date(), tz='utc'),
+                                                end_date=pd.Timestamp(open_pos.name.date(), tz='utc'),
+                                                assets=[sym.sid])[0][0][0] 
 
-        ending_price = ending_val / ending_amount
+        ending_amount = int(ending_val / close_price)
         closing_txn = OrderedDict(
             [
                 ("amount", -ending_amount),
-                ("price", ending_price),
+                ("price", close_price),
                 ("symbol", sym),
             ]
         )
@@ -323,7 +508,6 @@ def add_closing_transactions(positions, transactions):
         closed_txns = pd.concat([closed_txns, closing_txn])
 
     closed_txns = closed_txns[closed_txns.amount != 0]
-
     return closed_txns
 
 
@@ -378,10 +562,14 @@ def gen_round_trip_stats(round_trips):
     stats = {}
     stats["pnl"] = agg_all_long_short(round_trips, "pnl", PNL_STATS)
     stats["summary"] = agg_all_long_short(round_trips, "pnl", SUMMARY_STATS)
-    stats["duration"] = agg_all_long_short(round_trips, "duration", DURATION_STATS)
+    stats["duration"] = agg_all_long_short(
+        round_trips, "duration", DURATION_STATS
+    )
     stats["returns"] = agg_all_long_short(round_trips, "returns", RETURN_STATS)
 
-    stats["symbols"] = round_trips.groupby("symbol")["returns"].agg(RETURN_STATS).T
+    stats["symbols"] = (
+        round_trips.groupby("symbol")["returns"].agg(RETURN_STATS).T
+    )
 
     return stats
 
@@ -403,9 +591,13 @@ def print_round_trip_stats(round_trips, hide_pos=False):
 
     stats = gen_round_trip_stats(round_trips)
 
-    print_table(stats["summary"], float_format="{:.2f}".format, name="Summary stats")
+    print_table(
+        stats["summary"], float_format="{:.2f}".format, name="Summary stats"
+    )
     print_table(stats["pnl"], float_format="${:.2f}".format, name="PnL stats")
-    print_table(stats["duration"], float_format="{:.2f}".format, name="Duration stats")
+    print_table(
+        stats["duration"], float_format="{:.2f}".format, name="Duration stats"
+    )
     print_table(
         stats["returns"] * 100,
         float_format="{:.2f}%".format,
@@ -419,3 +611,59 @@ def print_round_trip_stats(round_trips, hide_pos=False):
             float_format="{:.2f}%".format,
             name="Symbol stats",
         )
+
+def cal_mae_mfe(roundtrips:pd.DataFrame, days:int):
+    """" 20230928 計算MAE, GMFE, BMFE等指標 Terry"""
+    from tqdm import tqdm
+    from zipline.data import bundles
+    bundle = bundles.load('tquant')
+
+    if days != None:
+        roundtrips['prices'] = [[0] * days]*len(roundtrips)
+    
+    all_prices = []
+
+    roundtrips['GMFE'], roundtrips['MAE'], roundtrips['BMFE'], roundtrips['MDD'] = 0,0,0,0
+
+    rts = roundtrips.set_index(['symbol', 'open_dt', 'close_dt']).copy()
+
+    for stock, st, et in tqdm(zip(rts.index.get_level_values(0), rts.index.get_level_values(1), rts.index.get_level_values(2)), total=len(rts)):
+
+        tmp = get_prices(start_date=pd.Timestamp(st.date(), tz='utc'), 
+                end_date=pd.Timestamp(et.date(), tz='utc'),
+                field='close',
+                assets=[stock])
+        
+        if days == None:
+            all_prices.append(tmp[stock].tolist())
+            
+        try: 
+            if days < len(tmp):
+                tmp = tmp.head(days)
+        except: pass
+
+        rts.loc[(stock, st, et), 'returns_tot'] = tmp.iloc[-1].div(tmp.iloc[0]).sub(1).mul(100).values[0]
+
+        rts.loc[(stock, st, et), 'GMFE'] = tmp.max().div(tmp.iloc[0]).sub(1).mul(100).values[0]
+
+        rts.loc[(stock, st, et), 'MAE'] = tmp.min().div(tmp.iloc[0]).sub(1).mul(100).values[0]
+        
+        try: 
+            rts.loc[(stock, st, et), 'BMFE'] = (tmp[tmp.index <= tmp.idxmin()[0]].max().div(tmp.iloc[0]).sub(1)).mul(100).values[0]
+            
+        except ValueError:
+            rts.loc[(stock, st, et), 'BMFE'] = 0
+        
+        if days != None:
+            rts.at[(stock, st, et), 'prices'] = tmp.iloc[:, 0].tolist()
+
+        rts.loc[(stock, st, et), 'MDD'] = tmp.div(tmp.cummax()).sub(1).min().mul(100)[0]
+    
+    if days == None:
+        rts = rts.assign(prices=all_prices)
+        
+    rts.reset_index(inplace=True)
+
+    mae = rts[['symbol', 'returns_tot', 'MDD', 'GMFE', 'MAE', 'BMFE', 'prices']]
+
+    return mae
