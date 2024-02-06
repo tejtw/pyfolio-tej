@@ -110,7 +110,9 @@ def get_txn_vol(transactions):
     return pd.concat([daily_values, daily_amounts], axis=1)
 
 
-def adjust_returns_for_slippage(returns, positions, transactions, slippage_bps):
+def adjust_returns_for_slippage(
+    returns, positions, transactions, slippage_bps
+):
     """
     Apply a slippage penalty for every dollar traded.
 
@@ -136,13 +138,36 @@ def adjust_returns_for_slippage(returns, positions, transactions, slippage_bps):
 
     slippage = 0.0001 * slippage_bps
     portfolio_value = positions.sum(axis=1)
-    pnl = portfolio_value * returns
+
+    '''
+    **修改pnl算法** 20230725
+    pnl（profit and loss）應該要是前一天portfolio_value * 當天returns，
+    原先程式碼是`pnl = portfolio_value * returns`，
+    代表是當天的portfolio_value * 當天的returns。所以做以下修改：
+    1.將當天portfolio_value/(1 + 當天的returns)得到前一天的portfolio_value。
+    2.接著再把步驟1的結果乘上當天的returns就得到當天的pnl
+    
+    此外，當adjusted_pnl=pnl=0時，skew及Kurtosis算不出來，因nan_policy='propagate'，
+    所以adjusted_returns先fillna(0)。
+    
+    註：
+    1.這邊的pnl與run_algorithm()裡的pnl不同。這邊的pnl包含收取股利的部分，因portfolio_value
+    包含股利（減資退還）的部分。然而run_algorithm()裡的pnl不包含股利（減資退還）。
+
+    2.這樣修改至少達到原本預期的功能，但是還是不太嚴謹。如果多付了slippage，這樣其實每天的portfolio_value
+    都會異動，只調整有交易日子的returns，不太對。待後續版本優化。
+
+    3.所以最嚴謹方式還是再跑一次回測，這個僅供快速比較使用。
+    '''
+    #pnl = portfolio_value * returns                                     # 20230725 (by MRC) 
+    pnl = portfolio_value * returns  / (1 + returns)                     # 20230725 (by MRC) 
+    
     traded_value = get_txn_vol(transactions).txn_volume
     slippage_dollars = traded_value * slippage
     adjusted_pnl = pnl.add(-slippage_dollars, fill_value=0)
     adjusted_returns = returns * adjusted_pnl / pnl
-
-    return adjusted_returns
+    
+    return adjusted_returns.fillna(0) # 20230725 (by MRC)
 
 
 def get_turnover(positions, transactions, denominator="AGB"):

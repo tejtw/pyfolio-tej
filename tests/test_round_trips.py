@@ -248,8 +248,12 @@ class RoundTripTestCase(TestCase):
             ),
         ]
     )
-    def test_extract_round_trips(self, transactions, expected, portfolio_value=None):
-        round_trips = extract_round_trips(transactions, portfolio_value=portfolio_value)
+    def test_extract_round_trips(
+        self, transactions, expected, portfolio_value=None
+    ):
+        round_trips = extract_round_trips(
+            transactions, portfolio_value=portfolio_value
+        )
 
         assert_frame_equal(
             round_trips.sort_index(axis="columns"),
@@ -269,7 +273,9 @@ class RoundTripTestCase(TestCase):
             index=dates[:3],
         )
 
-        expected_ix = dates[:3].append(DatetimeIndex([dates[2] + Timedelta(seconds=1)]))
+        expected_ix = dates[:3].append(
+            DatetimeIndex([dates[2] + Timedelta(seconds=1)])
+        )
         expected = DataFrame(
             data=[
                 ["A", 2, 10],

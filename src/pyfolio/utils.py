@@ -14,14 +14,17 @@
 # limitations under the License.
 
 import warnings
-from itertools import cycle
 
-import empyrical.utils
+from itertools import cycle
+from matplotlib.pyplot import cm
 import numpy as np
 import pandas as pd
 from IPython.display import display, HTML
-from matplotlib.pyplot import cm
-from packaging.version import Version
+from distutils.version import StrictVersion
+import empyrical.utils
+import inspect
+import re
+import pytz
 
 from . import pos
 from . import txn
@@ -68,9 +71,9 @@ COLORS = [
     "#808080",
 ]
 
-pandas_version = Version(pd.__version__)
+pandas_version = StrictVersion(pd.__version__)
 
-pandas_one_point_one_or_less = pandas_version < Version("1.2")
+pandas_one_point_one_or_less = pandas_version < StrictVersion("1.2")
 
 
 def one_dec_places(x, pos):
@@ -165,11 +168,16 @@ def extract_rets_pos_txn_from_zipline(backtest):
     >>> pyfolio.tears.create_full_tear_sheet(returns,
     >>>     positions, transactions)
     """
-
     backtest.index = backtest.index.normalize()
     if backtest.index.tzinfo is None:
         backtest.index = backtest.index.tz_localize("UTC")
+    # The `positions` and `returns` data must have a tz-aware DateTimeIndex set to UTC, with a time 
+    # of 0:00, otherwise some plots won't be able to be generated. (20231031)
+    elif backtest.index.tzinfo!=pytz.utc:
+        backtest.index = backtest.index.tz_localize(None).tz_localize('UTC')
+
     returns = backtest.returns
+
     raw_positions = []
     for dt, pos_row in backtest.positions.items():
         df = pd.DataFrame(pos_row)
@@ -179,14 +187,40 @@ def extract_rets_pos_txn_from_zipline(backtest):
         raise ValueError("The backtest does not have any positions.")
     positions = pd.concat(raw_positions)
     positions = pos.extract_pos(positions, backtest.ending_cash)
+
     transactions = txn.make_transaction_frame(backtest.transactions)
     if transactions.index.tzinfo is None:
         transactions.index = transactions.index.tz_localize("utc")
+    # The `transactions`` data must have a tz-aware DateTimeIndex set to UTC, with a time 
+    # of 0:00, otherwise some plots won't be able to be generated. (20231031)
+    elif transactions.index.tzinfo!=pytz.utc:
+        transactions.index = transactions.index.tz_localize(None).tz_localize('UTC')
 
     return returns, positions, transactions
 
 
-def print_table(table, name=None, float_format=None, formatters=None, header_rows=None):
+
+
+def _is_running_in_spyder():
+    """
+    The `_is_running_in_spyder` function determines if the current script
+    is being executed within the "Spyder" Integrated Development Environment
+    (IDE). It inspects the execution stack to search for any trace of "spyder"
+    in the "file paths". This check is necessary because Spyder seems to have issues
+    displaying tables using the `to_html` method. By identifying if the script runs in
+    Spyder, alternative table rendering methods can be employed to avoid display issues.
+    (20230908)
+    """
+    for f in inspect.stack():
+        # print(f.filename)
+        if re.search("spyder",f.filename):
+            return True
+    return False
+
+
+def print_table(
+    table, name=None, float_format=None, formatters=None, header_rows=None
+):
     """
     Pretty print a pandas DataFrame.
 
@@ -216,24 +250,31 @@ def print_table(table, name=None, float_format=None, formatters=None, header_row
     if name is not None:
         table.columns.name = name
 
-    html = table.to_html(float_format=float_format, formatters=formatters)
+    # Spyder seems to have issues displaying tables using the `to_html` method.
+    # By identifying whether the script is running in Spyder, we can use alternative
+    # table rendering methods instead.(20230908)
+    if not _is_running_in_spyder():
+        html = table.to_html(float_format=float_format, formatters=formatters)
 
-    if header_rows is not None:
-        # Count the number of columns for the text to span
-        n_cols = html.split("<thead>")[1].split("</thead>")[0].count("<th>")
+        if header_rows is not None:
+            # Count the number of columns for the text to span
+            n_cols = html.split("<thead>")[1].split("</thead>")[0].count("<th>")
 
-        # Generate the HTML for the extra rows
-        rows = ""
-        for name, value in header_rows.items():
-            rows += (
-                '\n    <tr style="text-align: right;"><th>%s</th>'
-                + "<td colspan=%d>%s</td></tr>"
-            ) % (name, n_cols, value)
+            # Generate the HTML for the extra rows
+            rows = ""
+            for name, value in header_rows.items():
+                rows += (
+                    '\n    <tr style="text-align: right;"><th>%s</th>'
+                    + "<td colspan=%d>%s</td></tr>"
+                ) % (name, n_cols, value)
 
-        # Inject the new HTML
-        html = html.replace("<thead>", "<thead>" + rows)
+            # Inject the new HTML
+            html = html.replace("<thead>", "<thead>" + rows)
 
-    display(HTML(html))
+        display(HTML(html))
+
+    else:
+        print(table)
 
 
 def standardize_data(x):
@@ -515,7 +556,9 @@ def configure_legend(
     - set colors according to colormap
     """
     chartBox = ax.get_position()
-    ax.set_position([chartBox.x0, chartBox.y0, chartBox.width * 0.75, chartBox.height])
+    ax.set_position(
+        [chartBox.x0, chartBox.y0, chartBox.width * 0.75, chartBox.height]
+    )
 
     # make legend order match graph lines
     handles, labels = ax.get_legend_handles_labels()

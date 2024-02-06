@@ -8,8 +8,8 @@ from . import pos
 def daily_txns_with_bar_data(transactions, market_data):
     """
     Sums the absolute value of shares traded in each name on each day.
-    Adds columns containing the closing price and total daily volume for
-    each day-ticker combination.
+    Adds columns containing the closing price and total daily volume(from market_data not transactions)
+    for each day-ticker combination.
 
     Parameters
     ----------
@@ -32,15 +32,20 @@ def daily_txns_with_bar_data(transactions, market_data):
     transactions.index.name = "date"
     txn_daily = pd.DataFrame(
         transactions.assign(amount=abs(transactions.amount))
-        .groupby(["symbol", pd.Grouper(freq="D")])
+        .groupby(["symbol", pd.Grouper(freq="D")])  
         .sum()["amount"]
-    )
+    )  # transactions的日期一定是交易日，pd.Grouper(freq="D")理應不會取到非交易日。
 
     txn_daily["price"] = market_data.xs("price", level=1).unstack()
-    txn_daily["volume"] = market_data.xs("volume", level=1).unstack()
+    txn_daily["volume"] = market_data.xs("volume", level=1).unstack() 
 
-    txn_daily = txn_daily.reset_index().set_index("date").sort_index().asfreq("D")
-
+    txn_daily = (
+        txn_daily.reset_index().set_index("date").sort_index()#.asfreq("D") 
+    ) 
+    #20230726 (by MRC) 
+    #刪除.asfreq("D")，不然會報錯："ValueError: cannot reindex from a duplicate axis"
+    #前面txn_daily也已經Grouper(freq="D")了，所以理應不用.asfreq("D")
+  
     return txn_daily
 
 
@@ -89,7 +94,9 @@ def days_to_liquidate_positions(
     """
 
     DV = market_data.xs("volume", level=1) * market_data.xs("price", level=1)
-    roll_mean_dv = DV.rolling(window=mean_volume_window, center=False).mean().shift()
+    roll_mean_dv = (
+        DV.rolling(window=mean_volume_window, center=False).mean().shift()
+    )
     roll_mean_dv = roll_mean_dv.replace(0, np.nan)
 
     positions_alloc = pos.get_percent_alloc(positions)
@@ -151,7 +158,9 @@ def get_max_days_to_liquidate_by_ticker(
     )
 
     if last_n_days is not None:
-        dtlp = dtlp.loc[dtlp.index.max() - pd.Timedelta(days=last_n_days) :]
+        #dtlp = dtlp.loc[dtlp.index.max() - pd.Timedelta(days=last_n_days) :] #日曆日
+        dtlp.loc[np.unique(market_data.index.get_level_values(0).date)[-last_n_days-1]:]
+        #20230726 (by MRC) 日曆日->交易日，但當market_data並非每個交易日都有的時候會有問題。
 
     pos_alloc = pos.get_percent_alloc(positions)
     pos_alloc = pos_alloc.drop("cash", axis=1)
@@ -163,15 +172,17 @@ def get_max_days_to_liquidate_by_ticker(
 
     worst_liq = (
         liq_desc.reset_index()
-        .sort_values("days_to_liquidate", ascending=False)
+        .sort_values("days_to_liquidate", ascending=False) 
         .groupby("symbol")
         .first()
-    )
+    )   # 每一個symbol取days_to_liquidate最大的那筆。
 
     return worst_liq
 
 
-def get_low_liquidity_transactions(transactions, market_data, last_n_days=None):
+def get_low_liquidity_transactions(
+    transactions, market_data, last_n_days=None
+):
     """
     For each traded name, find the daily transaction total that consumed
     the greatest proportion of available daily bar volume.
@@ -191,14 +202,19 @@ def get_low_liquidity_transactions(transactions, market_data, last_n_days=None):
 
     txn_daily_w_bar = daily_txns_with_bar_data(transactions, market_data)
     txn_daily_w_bar.index.name = "date"
-    txn_daily_w_bar = txn_daily_w_bar.reset_index()
 
     if last_n_days is not None:
-        md = txn_daily_w_bar.date.max() - pd.Timedelta(days=last_n_days)
-        txn_daily_w_bar = txn_daily_w_bar[txn_daily_w_bar.date > md]
+        #md = txn_daily_w_bar.date.max() - pd.Timedelta(days=last_n_days)   # 日曆日
+        #txn_daily_w_bar = txn_daily_w_bar[txn_daily_w_bar.date > md]       # 日曆日
+        txn_daily_w_bar = txn_daily_w_bar.loc[np.unique(market_data.index.get_level_values(0).date)[-last_n_days-1]:]
+        #20230726 (by MRC) 日曆日->交易日，當market_data並非每個交易日都有的時候會有問題。
+
+    txn_daily_w_bar = txn_daily_w_bar.reset_index()   #20230726 (by MRC) 搭配以上日曆日轉交易日的更改
 
     bar_consumption = txn_daily_w_bar.assign(
-        max_pct_bar_consumed=txn_daily_w_bar.amount.div(txn_daily_w_bar.volume).mul(100)
+        max_pct_bar_consumed=txn_daily_w_bar.amount.div(
+            txn_daily_w_bar.volume
+        ).mul(100)
     ).sort_values("max_pct_bar_consumed", ascending=False)
     max_bar_consumption = bar_consumption.groupby("symbol").first()
 
@@ -244,7 +260,9 @@ def apply_slippage_penalty(
     simulate_traded_dollars = txn_daily.price * simulate_traded_shares
     simulate_pct_volume_used = simulate_traded_shares / txn_daily.volume
 
-    penalties = simulate_pct_volume_used**2 * impact * simulate_traded_dollars
+    penalties = (
+        simulate_pct_volume_used ** 2 * impact * simulate_traded_dollars
+    )
 
     daily_penalty = penalties.resample("D").sum()
     daily_penalty = daily_penalty.reindex(returns.index).fillna(0)
@@ -254,7 +272,8 @@ def apply_slippage_penalty(
     # similarly. In other words, since we aren't applying compounding to
     # simulate_traded_shares, we shouldn't apply compounding to pv.
     portfolio_value = (
-        ep.cum_returns(returns, starting_value=backtest_starting_capital) * mult
+        ep.cum_returns(returns, starting_value=backtest_starting_capital)
+        * mult
     )
 
     adj_returns = returns - (daily_penalty / portfolio_value)

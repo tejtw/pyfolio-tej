@@ -1,0 +1,33 @@
+cname = {
+    'plot_rolling_returns': {'title': '累積報酬率 (倍)', 'ylabel': '累積報酬率', 'xlabel': ''},
+    'plot_returns': {'title': '報酬率 (倍)', 'ylabel': '報酬率', 'xlabel': ''},
+    'plot_annual_returns': {'title': '年報酬率', 'ylabel': '報酬率', 'xlabel': '年度'},
+    'plot_monthly_returns_dist': {'title': '月報酬率分布', 'ylabel': '月分數', 'xlabel': '報酬率'},
+    'plot_monthly_returns_heatmap': {'title': '每月報酬率 (%)', 'ylabel': '年度', 'xlabel': '月分'},
+    'plot_rolling_beta': {'title': '滾動Beta (6-month)', 'ylabel': 'Beta', 'xlabel': ''},
+    'plot_rolling_volatility': {'title': '滾動波動度 ({}-month)', 'ylabel': '波動度', 'xlabel': ''},
+    'plot_rolling_sharpe': {'title': '滾動夏普值 ({}-month)', 'ylabel': '夏普值', 'xlabel': ''},
+    'plot_drawdown_periods': {'title': '前 {top} 大回撤期間', 'ylabel': '累積報酬率', 'xlabel': ''},
+    'plot_drawdown_underwater': {'title': '回撤圖表', 'ylabel': '虧損幅度', 'xlabel': ''},
+    'plot_gross_leverage': {'title': '總槓桿率', 'ylabel': '槓桿比率', 'xlabel': ''},
+    'plot_exposures': {'title': '暴露度', 'ylabel': '暴露度', 'xlabel': ''},
+    'show_and_plot_top_positions': {'title': '投資組合歷史前10大持股', 'ylabel': '持股比例', 'xlabel': ''},
+    'plot_long_short_holdings': {'title': '買進/放空持股 (家數)', 'ylabel': '持股', 'xlabel': ''},
+    'plot_holdings': {'title': '總持股檔數', 'ylabel': '持股檔數', 'xlabel': ''},
+    'plot_sector_allocations': {'title': '產業配置', 'ylabel': '配置比例', 'xlabel': ''},
+    'plot_turnover': {'title': '每日周轉率 (倍)', 'ylabel': '周轉率', 'xlabel': ''},
+    'plot_return_quantiles': {'title': '報酬率分位數', 'ylabel': '', 'xlabel': ''},
+    'plot_slippage_sweep': {'title': '累積報酬率 (考慮額外每金額的滑價)', 'ylabel': '累積報酬率 (倍)', 'xlabel': ''},
+    'plot_slippage_sensitivity': {'title': '平均年化報酬率 (考慮額外每金額的滑價)', 'ylabel': '平均年化報酬率', 'xlabel': '每金額滑價 (bps)'},
+    'plot_daily_turnover_hist': {'title': '每日周轉率分布', 'ylabel': '次數', 'xlabel': '周轉率'},
+    'plot_capacity_sweep': {'title': '模擬不同資金規模下，滑價對夏普值的影響', 'ylabel': '夏普值', 'xlabel': '資金規模 ($百萬)'},
+    'plot_daily_volume': {'title': '每日交易量', 'ylabel': '交易股數 (股)', 'xlabel': ''},
+    'plot_monthly_returns_timeseries': {'title': '每月報酬率', 'ylabel': '報酬率', 'xlabel': ''},
+    'plot_perf_stats': {'title': '績效衡量指標分布', 'ylabel': '', 'xlabel': ''},
+    'plot_max_median_position_concentration': {'title': '買進/放空 最大&中位數持股比例', 'ylabel': '持股比例', 'xlabel': ''},
+    'plot_txn_time_hist':{'title':'交易時間分布','ylabel':'成交比例','xlabel':''},
+    'plot_round_trip_lifetimes':{'title':'投資組合持股期間分布與賣賣方向','ylabel':'','xlabel':''},
+    'plot_prob_profit_trade':{'title':'賣出持股/回補放空獲利的機率分布','ylabel':'次數','xlabel':''}
+    
+
+}

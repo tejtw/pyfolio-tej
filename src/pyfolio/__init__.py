@@ -1,20 +1,18 @@
-from . import capacity
-from . import interesting_periods
-from . import perf_attrib
-from . import pos
-from . import round_trips
-from . import timeseries
-from . import txn
 from . import utils
-from .plotting import *  # noqa
-from .tears import *  # noqa
+from . import timeseries
+from . import pos
+from . import txn
+from . import interesting_periods
+from . import capacity
+from . import round_trips
+from . import perf_attrib
 
-try:
-    from ._version import version as __version__
-    from ._version import version_tuple
-except ImportError:
-    __version__ = "unknown version"
-    version_tuple = (0, 0, "unknown version")
+from .tears import *  # noqa
+from .plotting import *  # noqa
+from ._version import get_versions
+
+__version__ = get_versions()["version"]
+del get_versions
 
 __all__ = [
     "utils",
@@ -25,4 +23,5 @@ __all__ = [
     "capacity",
     "round_trips",
     "perf_attrib",
+    "plot_cn_name_map"  #20231010 modify by yo
 ]
