@@ -9,10 +9,8 @@ from . import perf_attrib
 
 from .tears import *  # noqa
 from .plotting import *  # noqa
-from ._version import get_versions
+from ._version import __version__
 
-__version__ = get_versions()["version"]
-del get_versions
 
 __all__ = [
     "utils",
