@@ -11,7 +11,7 @@ authors = [
 ]
 maintainers = [
     { name = 'tej api Development Team' },
-    { email = 'tej@tej.com' }
+    { email = 'tej@tej.com.tw' }
 ]
 license = { text = 'Apache-2.0'}
 
