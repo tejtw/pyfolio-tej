@@ -32,8 +32,7 @@ def daily_txns_with_bar_data(transactions, market_data):
     transactions.index.name = "date"
     txn_daily = pd.DataFrame(
         transactions.assign(amount=abs(transactions.amount))
-        .groupby(["symbol", pd.Grouper(freq="D")])  
-        .sum()["amount"]
+        .groupby(["symbol", pd.Grouper(freq="D")])["amount"].sum()
     )  # transactions的日期一定是交易日，pd.Grouper(freq="D")理應不會取到非交易日。
 
     txn_daily["price"] = market_data.xs("price", level=1).unstack()
