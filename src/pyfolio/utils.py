@@ -168,7 +168,8 @@ def extract_rets_pos_txn_from_zipline(backtest):
     >>> pyfolio.tears.create_full_tear_sheet(returns,
     >>>     positions, transactions)
     """
-    backtest.index = backtest.index.normalize()
+    # remove for minute version backtest
+    # backtest.index = backtest.index.normalize()
     if backtest.index.tzinfo is None:
         backtest.index = backtest.index.tz_localize("UTC")
     # The `positions` and `returns` data must have a tz-aware DateTimeIndex set to UTC, with a time 
