@@ -2004,10 +2004,12 @@ def plot_txn_time_hist(
 
     txn_time = transactions.copy()
 
+    txn_time.index = txn_time.dt
+
     txn_time.index = txn_time.index.tz_convert(pytz.timezone(tz))
     txn_time.index = txn_time.index.map(lambda x: x.hour * 60 + x.minute)
     txn_time["trade_value"] = (txn_time.amount * txn_time.price).abs()
-    txn_time = txn_time.groupby(level=0).sum( numeric_only = True ).reindex(index=range(570, 961))
+    txn_time = txn_time.groupby(level=0).sum( numeric_only = True ).reindex(index=range(510, 901))
     txn_time.index = (txn_time.index / bin_minutes).astype(int) * bin_minutes
     txn_time = txn_time.groupby(level=0).sum( numeric_only = True )
 
@@ -2020,7 +2022,7 @@ def plot_txn_time_hist(
 
     ax.bar(txn_time.index, txn_time.trade_value, width=bin_minutes, **kwargs)
 
-    ax.set_xlim(570, 960)
+    ax.set_xlim(510, 901)
     ax.set_xticks(txn_time.index[:: int(30 / bin_minutes)])
     ax.set_xticklabels(txn_time.time_str[:: int(30 / bin_minutes)])
     ax.set_title("Transaction time distribution")
