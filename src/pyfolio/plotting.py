@@ -930,7 +930,12 @@ def plot_rolling_returns(
     is_cum_returns.plot(
         lw=3, color="forestgreen", alpha=0.6, label="Backtest", ax=ax, **kwargs
     )
-
+    
+    if (logy) :
+        ticks = ax.get_yticks()
+        ticks = [float("{:.2f}".format(tick)) for tick in ticks]
+        ax.set_yticks(ticks)
+        
     if len(oos_cum_returns) > 0:
         oos_cum_returns.plot(
             lw=4, color="red", alpha=0.6, label="Live", ax=ax, **kwargs
