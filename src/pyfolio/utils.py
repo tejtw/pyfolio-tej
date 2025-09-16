@@ -20,7 +20,7 @@ from matplotlib.pyplot import cm
 import numpy as np
 import pandas as pd
 from IPython.display import display, HTML
-from distutils.version import StrictVersion
+from packaging.version import Version
 import empyrical.utils
 import inspect
 import re
@@ -71,9 +71,9 @@ COLORS = [
     "#808080",
 ]
 
-pandas_version = StrictVersion(pd.__version__)
+pandas_version = Version(pd.__version__)
 
-pandas_one_point_one_or_less = pandas_version < StrictVersion("1.2")
+pandas_one_point_one_or_less = pandas_version < Version("1.2")
 
 
 def one_dec_places(x, pos):
